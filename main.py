@@ -78,7 +78,7 @@ def _frage(prompt: str, standard: str = "") -> str:
 
 def _frage_ordner(prompt: str, standard: str = "") -> str:
     """
-    Fragt nach einem Ordnerpfad und wiederholt die Frage, bis der Ordner existiert.
+    Fragt nach einem Pflicht-Ordnerpfad und wiederholt bis ein gueltiger Pfad kommt.
 
     Verhindert, dass die Pipeline mit einem ungültigen Pfad gestartet wird.
     """
@@ -89,12 +89,35 @@ def _frage_ordner(prompt: str, standard: str = "") -> str:
         print(f"  Fehler: Ordner '{pfad}' nicht gefunden. Bitte erneut eingeben.")
 
 
+def _frage_ordner_optional(prompt: str, standard: str = "") -> str:
+    """
+    Fragt nach einem optionalen Ordnerpfad.
+
+    Leere Eingabe oder ungültiger Pfad → leerer String (kein Fehler).
+    Wird fuer den Foto-Ordner verwendet, da Fotos nicht zwingend benoetigt werden.
+    """
+    anzeige = f"{prompt} [{standard}] (Enter = ohne Fotos): "
+    antwort = input(anzeige).strip()
+    pfad = antwort if antwort else standard
+    if not pfad or not Path(pfad).is_dir():
+        if pfad:
+            print(f"  Hinweis: '{pfad}' nicht gefunden — Pipeline laeuft ohne Fotos.")
+        else:
+            print("  Kein Foto-Ordner angegeben — Pipeline laeuft ohne Fotos.")
+        return ""
+    return pfad
+
+
 def _interaktive_eingabe(args: argparse.Namespace) -> None:
     """
-    Fragt im Terminal nach allen Pflichtfeldern, die noch nicht gesetzt sind.
+    Fragt im Terminal nach allen Feldern, die noch nicht gesetzt sind.
 
     Wird in cmd_run aufgerufen, damit die Pipeline auch ohne CLI-Argumente
-    gestartet werden kann. Ordnerpfade werden validiert (muessen existieren).
+    gestartet werden kann. Audio-Ordner ist Pflicht, Foto-Ordner optional.
+
+    Standardpfade (relativ zum Projektordner, funktioniert auf jedem Rechner):
+      Audio: data/audio
+      Fotos: data/fotos
     """
     print("\n" + "=" * 55)
     print("  Audio-Foto-Pipeline  —  Begehungsprotokoll")
@@ -102,18 +125,16 @@ def _interaktive_eingabe(args: argparse.Namespace) -> None:
     print("Bitte Angaben zur Begehung eingeben.")
     print("(Leere Eingabe = Standardwert in eckigen Klammern)\n")
 
-    # Ordner mit Validierung abfragen (wiederholt bis gueltiger Pfad)
-    if not getattr(args, "audio", ""):
-        args.audio = _frage_ordner("Audio-Ordner", "data/audio")
-    elif not Path(args.audio).is_dir():
-        print(f"  Hinweis: '{args.audio}' nicht gefunden, bitte neuen Pfad eingeben.")
+    # Audio-Ordner: Pflichtfeld, wird wiederholt bis gueltiger Pfad
+    if not getattr(args, "audio", "") or not Path(args.audio).is_dir():
         args.audio = _frage_ordner("Audio-Ordner", "data/audio")
 
+    # Foto-Ordner: optional, Pipeline laeuft auch ohne Fotos
     if not getattr(args, "fotos", ""):
-        args.fotos = _frage_ordner("Fotos-Ordner", "data/fotos")
-    elif not Path(args.fotos).is_dir():
-        print(f"  Hinweis: '{args.fotos}' nicht gefunden, bitte neuen Pfad eingeben.")
-        args.fotos = _frage_ordner("Fotos-Ordner", "data/fotos")
+        args.fotos = _frage_ordner_optional("Fotos-Ordner", "data/fotos")
+    elif args.fotos and not Path(args.fotos).is_dir():
+        print(f"  Hinweis: '{args.fotos}' nicht gefunden — Pipeline laeuft ohne Fotos.")
+        args.fotos = ""
 
     # Projektangaben (optional, erscheinen auf Titelseite)
     args.baustelle = _frage(
@@ -146,34 +167,42 @@ def cmd_match(args: argparse.Namespace) -> None:
     )
 
     audio_ordner = Path(args.audio)
-    foto_ordner = Path(args.fotos)
     ausgabe = Path(args.ausgabe)
 
     if not audio_ordner.is_dir():
         print(f"Fehler: Audio-Ordner nicht gefunden: {audio_ordner}")
-        sys.exit(1)
-    if not foto_ordner.is_dir():
-        print(f"Fehler: Foto-Ordner nicht gefunden: {foto_ordner}")
         sys.exit(1)
 
     print(f"Lese Audio-Dateien aus: {audio_ordner}")
     audios = lese_alle_audios(audio_ordner)
     print(f"  {len(audios)} Audio-Datei(en) gefunden")
 
+    if not audios:
+        print("Fehler: Keine Audio-Dateien gefunden.")
+        sys.exit(1)
+
     for a in audios:
         quelle = "M4A-Metadaten" if a.startzeitpunkt_zuverlaessig else "Dateisystem (Fallback)"
         print(f"  {a.pfad.name}: {a.startzeitpunkt.strftime('%Y-%m-%d %H:%M:%S')} [{quelle}]")
 
-    print(f"\nLese Fotos aus: {foto_ordner}")
-    fotos = lese_alle_fotos(foto_ordner)
-    print(f"  {len(fotos)} Foto(s) gefunden")
+    # Fotos sind optional — Pipeline laeuft auch ohne
+    foto_pfad = getattr(args, "fotos", "") or ""
+    foto_ordner = Path(foto_pfad) if foto_pfad else None
 
-    if not audios or not fotos:
-        print("Fehler: Keine Audio- oder Foto-Dateien gefunden.")
-        sys.exit(1)
+    if foto_ordner and foto_ordner.is_dir():
+        print(f"\nLese Fotos aus: {foto_ordner}")
+        fotos = lese_alle_fotos(foto_ordner)
+        print(f"  {len(fotos)} Foto(s) gefunden")
+    else:
+        print("\nKein Foto-Ordner angegeben — Matching wird ohne Fotos gespeichert.")
+        fotos = []
 
-    mappings = matche_fotos(fotos, audios)
-    drucke_zusammenfassung(mappings)
+    if fotos:
+        mappings = matche_fotos(fotos, audios)
+        drucke_zusammenfassung(mappings)
+    else:
+        mappings = []
+
     speichere_mapping(mappings, ausgabe)
     print(f"\nMapping gespeichert: {ausgabe}")
 
@@ -393,7 +422,7 @@ def main() -> None:
         help="Modul 1: Fotos und Audio per Zeitstempel zuordnen",
     )
     p_match.add_argument("--audio", required=True, help="Ordner mit Audio-Dateien")
-    p_match.add_argument("--fotos", required=True, help="Ordner mit Fotos")
+    p_match.add_argument("--fotos", default="", help="Ordner mit Fotos (optional)")
     p_match.add_argument(
         "--ausgabe", default="output/mapping.json",
         help="Ausgabe-JSON (default: output/mapping.json)",
