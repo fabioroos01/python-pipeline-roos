@@ -9,6 +9,19 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Inches, Pt, RGBColor
 
+# Pfad zum Logo (relativ zum Projektverzeichnis)
+_LOGO_PFAD = Path("Templates/Logo_Emch_Berger.png")
+
+_FOOTER_TEXT = (
+    "Emch+Berger WSB AG  |  "
+    "Emmenbrücke – Cham – Kriens – Sarnen  |  "
+    "ebwsb@emchberger.ch  |  www.emchberger.ch"
+)
+
+
+# ---------------------------------------------------------------------------
+# Hilfsfunktionen
+# ---------------------------------------------------------------------------
 
 def _keine_rahmen(table) -> None:
     """Entfernt alle sichtbaren Rahmen einer Tabelle."""
@@ -34,6 +47,19 @@ def _linie_unter_absatz(paragraph) -> None:
     bottom.set(qn("w:space"), "1")
     bottom.set(qn("w:color"), "auto")
     pBdr.append(bottom)
+    pPr.append(pBdr)
+
+
+def _linie_ueber_absatz(paragraph) -> None:
+    """Fuegt eine horizontale Linie oberhalb eines Absatzes ein (fuer Footer)."""
+    pPr = paragraph._p.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    top = OxmlElement("w:top")
+    top.set(qn("w:val"), "single")
+    top.set(qn("w:sz"), "4")
+    top.set(qn("w:space"), "1")
+    top.set(qn("w:color"), "AAAAAA")
+    pBdr.append(top)
     pPr.append(pBdr)
 
 
@@ -77,99 +103,214 @@ def _suche_passendes_foto(befund: dict, mapping: list[dict]) -> Path | None:
     return bestes_foto if kleinster_abstand < 30 else None
 
 
-def _titelseite(doc: Document, titel: str, datum: str) -> None:
-    """Erstellt die Titelseite des Berichts."""
-    doc.add_paragraph()
-    doc.add_paragraph()
+# ---------------------------------------------------------------------------
+# Header / Footer
+# ---------------------------------------------------------------------------
 
-    tp = doc.add_paragraph(titel)
-    tp.runs[0].font.size = Pt(28)
-    tp.runs[0].font.bold = True
+def _setze_header_footer(doc: Document) -> None:
+    """
+    Setzt Header (Logo) und Footer (Adresse) fuer alle Seiten ab Seite 2.
 
+    Die Titelseite (Seite 1) bekommt keinen Header/Footer,
+    weil different_first_page_header_footer=True gesetzt wird.
+    """
+    section = doc.sections[0]
+    section.different_first_page_header_footer = True
+
+    # --- Regulaerer Header (ab Seite 2) ---
+    header = section.header
+    hp = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+    hp.clear()
+    hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    if _LOGO_PFAD.exists():
+        hp.add_run().add_picture(str(_LOGO_PFAD), height=Cm(0.8))
+    else:
+        r = hp.add_run("Emch+Berger WSB AG")
+        r.font.size = Pt(9)
+        r.font.bold = True
+
+    _linie_unter_absatz(hp)
+
+    # --- Regulaerer Footer (ab Seite 2) ---
+    footer = section.footer
+    fp = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+    fp.clear()
+    _linie_ueber_absatz(fp)
+
+    r = fp.add_run(_FOOTER_TEXT)
+    r.font.size = Pt(8)
+    r.font.color.rgb = RGBColor(0x60, 0x60, 0x60)
+
+
+# ---------------------------------------------------------------------------
+# Titelseite
+# ---------------------------------------------------------------------------
+
+def _titelseite(
+    doc: Document,
+    baustelle: str,
+    datum: str,
+    aufnehmer: str,
+    projektnummer: str = "",
+) -> None:
+    """
+    Erstellt die Titelseite mit Logo, Baustelennamen, Datum und Aufnehmer.
+
+    Layout (angelehnt an Emch+Berger WSB Vorlage):
+      - Logo oben rechts
+      - Label "Begehungsprotokoll"
+      - Baustelle als Haupttitel (gross)
+      - Trennlinie
+      - Infotabelle: Projektnummer | Datum | Aufgenommen von
+    """
+    # Logo oben rechts
+    logo_p = doc.add_paragraph()
+    logo_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    if _LOGO_PFAD.exists():
+        logo_p.add_run().add_picture(str(_LOGO_PFAD), height=Cm(2.0))
+    else:
+        r = logo_p.add_run("Emch+Berger WSB AG")
+        r.font.size = Pt(14)
+        r.font.bold = True
+
+    # Abstand
+    for _ in range(4):
+        doc.add_paragraph()
+
+    # Label
+    label_p = doc.add_paragraph("Begehungsprotokoll")
+    label_p.runs[0].font.size = Pt(12)
+    label_p.runs[0].font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+
+    # Haupttitel: Baustelle
+    titel_text = baustelle if baustelle else "< Baustelle >"
+    titel_p = doc.add_paragraph(titel_text)
+    titel_p.runs[0].font.size = Pt(26)
+    titel_p.runs[0].font.bold = True
+
+    # Trennlinie
     trenn = doc.add_paragraph()
     _linie_unter_absatz(trenn)
 
     doc.add_paragraph()
 
-    datum_text = datum if datum else datetime.today().strftime("%d. %B %Y")
-    dp = doc.add_paragraph(datum_text)
-    dp.runs[0].font.size = Pt(12)
+    # Infotabelle
+    if datum:
+        datum_text = datum
+    else:
+        _monate_de = [
+            "", "Januar", "Februar", "März", "April", "Mai", "Juni",
+            "Juli", "August", "September", "Oktober", "November", "Dezember",
+        ]
+        heute = datetime.today()
+        datum_text = f"{heute.day}. {_monate_de[heute.month]} {heute.year}"
 
-    doc.add_paragraph()
+    # Zeilen: Projektnummer (nur wenn angegeben), Datum, Aufgenommen von
+    zeilen = []
+    if projektnummer:
+        zeilen.append(("Projektnummer:", projektnummer))
+    zeilen.append(("Datum:", datum_text))
+    zeilen.append(("Aufgenommen von:", aufnehmer if aufnehmer else "–"))
 
-    info_p = doc.add_paragraph("Automatisch erstellt durch Audio-Foto-Pipeline")
-    info_p.runs[0].font.size = Pt(10)
-    info_p.runs[0].font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+    tbl = doc.add_table(rows=len(zeilen), cols=2)
+    _keine_rahmen(tbl)
+
+    for row_idx, (label, wert) in enumerate(zeilen):
+        lbl = tbl.cell(row_idx, 0).paragraphs[0].add_run(label)
+        lbl.font.bold = True
+        lbl.font.size = Pt(10)
+        tbl.cell(row_idx, 0).width = Cm(5)
+        val = tbl.cell(row_idx, 1).paragraphs[0].add_run(wert)
+        val.font.size = Pt(10)
+        tbl.cell(row_idx, 1).width = Cm(12)
+
+    # Abstand und Fusszeile Titelseite
+    for _ in range(3):
+        doc.add_paragraph()
+
+    hinweis_p = doc.add_paragraph("Automatisch erstellt durch Audio-Foto-Pipeline")
+    hinweis_p.runs[0].font.size = Pt(9)
+    hinweis_p.runs[0].font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
 
     doc.add_page_break()
 
 
-def _befundseiten(doc: Document, befunde: list[dict], mapping: list[dict]) -> list[tuple[int, Path]]:
-    """
-    Schreibt die Befundseiten mit Zeitstempeln und Fotoverweisen.
+# ---------------------------------------------------------------------------
+# Befundseiten
+# ---------------------------------------------------------------------------
 
-    Gibt eine Liste von (Foto-Nummer, Foto-Pfad) zurueck fuer den Anhang.
+def _befundseiten(
+    doc: Document,
+    befunde: list[dict],
+    mapping: list[dict],
+) -> list[tuple[int, Path]]:
+    """
+    Schreibt die Befundseiten als Stichpunktliste.
+
+    Jede Gruppe (Pause > 2s) wird ein Bullet-Point.
+    Fotos werden als Verweis direkt unter dem jeweiligen Stichpunkt aufgefuehrt.
+    Gibt eine Liste von (Foto-Nummer, Foto-Pfad) fuer den Anhang zurueck.
     """
     foto_liste: list[tuple[int, Path]] = []
     foto_nr = 1
-    aktueller_raum = None
+    aktueller_ort = None
 
-    h = doc.add_heading("Befunde", level=1)
-    h.runs[0].font.size = Pt(20)
+    h = doc.add_heading("Notizen", level=1)
+    h.runs[0].font.size = Pt(18)
     h.runs[0].font.bold = True
     h.runs[0].font.color.rgb = RGBColor(0, 0, 0)
 
     for befund in befunde:
-        raum = befund.get("raum_hinweis")
+        ort = befund.get("raum_hinweis")
 
-        if raum and raum != aktueller_raum:
+        # Neue Ortsbezeichnung als Unterueberschrift
+        if ort and ort != aktueller_ort:
             doc.add_paragraph()
-            trenn = doc.add_paragraph()
-            _linie_unter_absatz(trenn)
-            rh = doc.add_heading(raum, level=2)
-            rh.runs[0].font.size = Pt(13)
-            rh.runs[0].font.color.rgb = RGBColor(0x30, 0x30, 0x30)
-            aktueller_raum = raum
+            uh = doc.add_heading(ort, level=2)
+            uh.runs[0].font.size = Pt(12)
+            uh.runs[0].font.color.rgb = RGBColor(0x30, 0x30, 0x30)
+            aktueller_ort = ort
 
+        # Stichpunkt
+        bullet = doc.add_paragraph(style="List Bullet")
+        bullet_r = bullet.add_run(befund.get("text", ""))
+        bullet_r.font.size = Pt(10)
+
+        # Zeitstempel (klein, grau, eingerueckt)
         start = befund.get("start", 0.0)
         ende = befund.get("ende", 0.0)
-        zeitstempel = f"[{_format_zeit(start)} – {_format_zeit(ende)}]"
+        zeit_p = doc.add_paragraph(f"       [{_format_zeit(start)} – {_format_zeit(ende)}]")
+        zeit_p.runs[0].font.size = Pt(8)
+        zeit_p.runs[0].font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
+        zeit_p.runs[0].italic = True
+        zeit_p.paragraph_format.space_before = Pt(0)
+        zeit_p.paragraph_format.space_after = Pt(2)
 
-        # Zweispaltiger Eintrag: Zeitstempel | Befundtext
-        tbl = doc.add_table(rows=1, cols=2)
-        _keine_rahmen(tbl)
-        tbl.columns[0].width = Cm(3)
-        tbl.columns[1].width = Cm(14)
-
-        ts_p = tbl.cell(0, 0).paragraphs[0]
-        ts_r = ts_p.add_run(zeitstempel)
-        ts_r.font.size = Pt(9)
-        ts_r.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
-
-        text_p = tbl.cell(0, 1).paragraphs[0]
-        text_r = text_p.add_run(befund.get("text", ""))
-        text_r.font.size = Pt(10)
-
+        # Fotoverweis
         foto = _suche_passendes_foto(befund, mapping)
         if foto:
-            ref_p = doc.add_paragraph()
-            ref_r = ref_p.add_run(f"-> Foto {foto_nr}  ({foto.name})")
-            ref_r.font.size = Pt(9)
-            ref_r.italic = True
+            ref_p = doc.add_paragraph(f"       → Foto {foto_nr}  ({foto.name})")
+            ref_p.runs[0].font.size = Pt(9)
+            ref_p.runs[0].italic = True
+            ref_p.runs[0].font.color.rgb = RGBColor(0x20, 0x20, 0x90)
+            ref_p.paragraph_format.space_after = Pt(6)
             foto_liste.append((foto_nr, foto))
             foto_nr += 1
 
-        doc.add_paragraph()
-
     return foto_liste
 
+
+# ---------------------------------------------------------------------------
+# Fotoanhang
+# ---------------------------------------------------------------------------
 
 def _fotoanhang(doc: Document, fotos: list[tuple[int, Path]]) -> None:
     """Fuegt den Fotoanhang mit allen Fotos am Ende des Dokuments ein."""
     doc.add_page_break()
 
     h = doc.add_heading("Fotoanhang", level=1)
-    h.runs[0].font.size = Pt(20)
+    h.runs[0].font.size = Pt(18)
     h.runs[0].font.bold = True
     h.runs[0].font.color.rgb = RGBColor(0, 0, 0)
 
@@ -192,24 +333,34 @@ def _fotoanhang(doc: Document, fotos: list[tuple[int, Path]]) -> None:
         doc.add_paragraph()
 
 
+# ---------------------------------------------------------------------------
+# Hauptfunktion
+# ---------------------------------------------------------------------------
+
 def erstelle_bericht(
     befunde: list[dict],
     mapping: list[dict],
     ausgabe_pfad: Path,
     titel: str = "Begehungsprotokoll",
     datum: str = "",
+    baustelle: str = "",
+    aufnehmer: str = "",
+    projektnummer: str = "",
 ) -> None:
     """
     Erstellt einen Word-Bericht mit Befunden und Fotos.
 
-    Reihenfolge: Titelseite -> Befundseiten -> Fotoanhang.
+    Reihenfolge: Titelseite → Notizseiten (Stichpunkte) → Fotoanhang.
 
     Args:
-        befunde: Strukturierte Befunde aus format.py.
-        mapping: Foto-Audio-Mapping aus match.py (kann leer sein).
-        ausgabe_pfad: Pfad zur Ausgabedatei (.docx).
-        titel: Titel des Berichts (erscheint auf der Titelseite).
-        datum: Datum als String. Leer = heutiges Datum.
+        befunde:       Strukturierte Befunde aus format.py.
+        mapping:       Foto-Audio-Mapping aus match.py (kann leer sein).
+        ausgabe_pfad:  Pfad zur Ausgabedatei (.docx).
+        titel:         Wird nicht mehr direkt verwendet (baustelle ersetzt es).
+        datum:         Datum als String. Leer = aus Audio-Metadaten oder heute.
+        baustelle:     Name der Baustelle fuer die Titelseite.
+        aufnehmer:     Name der Person, welche die Aufnahme gemacht hat.
+        projektnummer: Projektnummer fuer die Titelseite.
     """
     doc = Document()
 
@@ -219,7 +370,14 @@ def erstelle_bericht(
     section.left_margin = Cm(3)
     section.right_margin = Cm(2)
 
-    _titelseite(doc, titel, datum)
+    _setze_header_footer(doc)
+    _titelseite(
+        doc,
+        baustelle=baustelle,
+        datum=datum,
+        aufnehmer=aufnehmer,
+        projektnummer=projektnummer,
+    )
     foto_liste = _befundseiten(doc, befunde, mapping)
 
     if foto_liste:

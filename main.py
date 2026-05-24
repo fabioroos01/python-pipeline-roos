@@ -64,6 +64,53 @@ def _finde_audiodateien(ordner: Path) -> list[Path]:
     return sorted(dateien)
 
 
+def _frage(prompt: str, standard: str = "") -> str:
+    """
+    Fragt den Benutzer interaktiv nach einer Eingabe.
+
+    Zeigt den Standardwert in Klammern an; leere Eingabe = Standardwert.
+    """
+    if standard:
+        anzeige = f"{prompt} [{standard}]: "
+    else:
+        anzeige = f"{prompt}: "
+    antwort = input(anzeige).strip()
+    return antwort if antwort else standard
+
+
+def _interaktive_eingabe(args: argparse.Namespace) -> None:
+    """
+    Fragt im Terminal nach allen Pflichtfeldern, die noch nicht gesetzt sind.
+
+    Wird in cmd_run aufgerufen, damit die Pipeline auch ohne CLI-Argumente
+    gestartet werden kann.
+    """
+    print("\n" + "=" * 55)
+    print("  Audio-Foto-Pipeline  —  Begehungsprotokoll")
+    print("=" * 55)
+    print("Bitte Angaben zur Begehung eingeben:")
+    print("(Leere Eingabe = Standardwert in eckigen Klammern)\n")
+
+    if not getattr(args, "audio", ""):
+        args.audio = _frage("Audio-Ordner", "data/audio")
+    if not getattr(args, "fotos", ""):
+        args.fotos = _frage("Fotos-Ordner", "data/fotos")
+
+    args.baustelle = _frage(
+        "Projektname / Baustelle",
+        getattr(args, "baustelle", "") or "",
+    )
+    args.projektnummer = _frage(
+        "Projektnummer",
+        getattr(args, "projektnummer", "") or "",
+    )
+    args.aufnehmer = _frage(
+        "Aufgenommen von",
+        getattr(args, "aufnehmer", "") or "",
+    )
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Subcommands (ein Modul nach dem anderen)
 # ---------------------------------------------------------------------------
@@ -199,18 +246,42 @@ def cmd_export(args: argparse.Namespace) -> None:
         with open(args.mapping, encoding="utf-8") as f:
             mapping = json.load(f)
 
+    # Datum automatisch aus Audio-Metadaten lesen (falls nicht angegeben)
+    datum = getattr(args, "datum", "") or ""
+    if not datum and befunde:
+        audio_pfad_str = befunde[0].get("audio_pfad", "")
+        if audio_pfad_str and Path(audio_pfad_str).exists():
+            try:
+                from match import lese_audio_info
+                audio_info = lese_audio_info(Path(audio_pfad_str))
+                _monate_de = [
+                    "", "Januar", "Februar", "März", "April", "Mai", "Juni",
+                    "Juli", "August", "September", "Oktober", "November", "Dezember",
+                ]
+                dt = audio_info.startzeitpunkt
+                datum = f"{dt.day}. {_monate_de[dt.month]} {dt.year}"
+                print(f"  Datum aus Audio-Metadaten: {datum}")
+            except Exception:
+                pass
+
     print(f"Erstelle Word-Bericht mit {len(befunde)} Befunden...")
     erstelle_bericht(
         befunde=befunde,
         mapping=mapping,
         ausgabe_pfad=ausgabe,
         titel=getattr(args, "titel", "Begehungsprotokoll"),
-        datum=getattr(args, "datum", ""),
+        datum=datum,
+        baustelle=getattr(args, "baustelle", ""),
+        aufnehmer=getattr(args, "aufnehmer", ""),
+        projektnummer=getattr(args, "projektnummer", ""),
     )
 
 
 def cmd_run(args: argparse.Namespace) -> None:
     """Fuehrt die gesamte Pipeline aus: Matching -> STT -> Formatierung -> Export."""
+    # Fehlende Felder interaktiv abfragen
+    _interaktive_eingabe(args)
+
     arbeitsordner = Path(args.ausgabe_ordner)
     arbeitsordner.mkdir(parents=True, exist_ok=True)
 
@@ -284,14 +355,16 @@ def main() -> None:
         help="Gesamte Pipeline ausfuehren (empfohlen)",
         description="Fuehrt alle 4 Module der Reihe nach aus.",
     )
-    p_run.add_argument("--audio", required=True, help="Ordner mit Audio-Dateien")
-    p_run.add_argument("--fotos", required=True, help="Ordner mit Fotos")
+    p_run.add_argument("--audio", default="", help="Ordner mit Audio-Dateien (interaktiv abgefragt wenn leer)")
+    p_run.add_argument("--fotos", default="", help="Ordner mit Fotos (interaktiv abgefragt wenn leer)")
     p_run.add_argument(
         "--ausgabe-ordner", default="output", dest="ausgabe_ordner",
         help="Ausgabeordner fuer alle Zwischenresultate (default: output/)",
     )
-    p_run.add_argument("--titel", default="Begehungsprotokoll", help="Titel des Berichts")
-    p_run.add_argument("--datum", default="", help="Datum fuer Bericht (default: heute)")
+    p_run.add_argument("--baustelle", default="", help="Name der Baustelle (Titelseite)")
+    p_run.add_argument("--projektnummer", default="", help="Projektnummer (Titelseite)")
+    p_run.add_argument("--aufnehmer", default="", help="Name der aufnehmenden Person (Titelseite)")
+    p_run.add_argument("--datum", default="", help="Datum fuer Bericht (default: aus Audio-Metadaten)")
     p_run.set_defaults(func=cmd_run)
 
     # --- match: nur Modul 1 ---
@@ -342,8 +415,10 @@ def main() -> None:
         "--ausgabe", default="output/bericht.docx",
         help="Ausgabe .docx (default: output/bericht.docx)",
     )
-    p_export.add_argument("--titel", default="Begehungsprotokoll", help="Titel des Berichts")
-    p_export.add_argument("--datum", default="", help="Datum fuer Bericht")
+    p_export.add_argument("--baustelle", default="", help="Name der Baustelle (Titelseite)")
+    p_export.add_argument("--projektnummer", default="", help="Projektnummer (Titelseite)")
+    p_export.add_argument("--aufnehmer", default="", help="Name der aufnehmenden Person (Titelseite)")
+    p_export.add_argument("--datum", default="", help="Datum fuer Bericht (default: aus Audio-Metadaten)")
     p_export.set_defaults(func=cmd_export)
 
     args = parser.parse_args()
