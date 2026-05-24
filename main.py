@@ -68,14 +68,25 @@ def _frage(prompt: str, standard: str = "") -> str:
     """
     Fragt den Benutzer interaktiv nach einer Eingabe.
 
-    Zeigt den Standardwert in Klammern an; leere Eingabe = Standardwert.
+    Zeigt den Standardwert in eckigen Klammern an.
+    Leere Eingabe (nur Enter) uebernimmt den Standardwert.
     """
-    if standard:
-        anzeige = f"{prompt} [{standard}]: "
-    else:
-        anzeige = f"{prompt}: "
+    anzeige = f"{prompt} [{standard}]: " if standard else f"{prompt}: "
     antwort = input(anzeige).strip()
     return antwort if antwort else standard
+
+
+def _frage_ordner(prompt: str, standard: str = "") -> str:
+    """
+    Fragt nach einem Ordnerpfad und wiederholt die Frage, bis der Ordner existiert.
+
+    Verhindert, dass die Pipeline mit einem ungültigen Pfad gestartet wird.
+    """
+    while True:
+        pfad = _frage(prompt, standard)
+        if Path(pfad).is_dir():
+            return pfad
+        print(f"  Fehler: Ordner '{pfad}' nicht gefunden. Bitte erneut eingeben.")
 
 
 def _interaktive_eingabe(args: argparse.Namespace) -> None:
@@ -83,19 +94,28 @@ def _interaktive_eingabe(args: argparse.Namespace) -> None:
     Fragt im Terminal nach allen Pflichtfeldern, die noch nicht gesetzt sind.
 
     Wird in cmd_run aufgerufen, damit die Pipeline auch ohne CLI-Argumente
-    gestartet werden kann.
+    gestartet werden kann. Ordnerpfade werden validiert (muessen existieren).
     """
     print("\n" + "=" * 55)
     print("  Audio-Foto-Pipeline  —  Begehungsprotokoll")
     print("=" * 55)
-    print("Bitte Angaben zur Begehung eingeben:")
+    print("Bitte Angaben zur Begehung eingeben.")
     print("(Leere Eingabe = Standardwert in eckigen Klammern)\n")
 
+    # Ordner mit Validierung abfragen (wiederholt bis gueltiger Pfad)
     if not getattr(args, "audio", ""):
-        args.audio = _frage("Audio-Ordner", "data/audio")
-    if not getattr(args, "fotos", ""):
-        args.fotos = _frage("Fotos-Ordner", "data/fotos")
+        args.audio = _frage_ordner("Audio-Ordner", "data/audio")
+    elif not Path(args.audio).is_dir():
+        print(f"  Hinweis: '{args.audio}' nicht gefunden, bitte neuen Pfad eingeben.")
+        args.audio = _frage_ordner("Audio-Ordner", "data/audio")
 
+    if not getattr(args, "fotos", ""):
+        args.fotos = _frage_ordner("Fotos-Ordner", "data/fotos")
+    elif not Path(args.fotos).is_dir():
+        print(f"  Hinweis: '{args.fotos}' nicht gefunden, bitte neuen Pfad eingeben.")
+        args.fotos = _frage_ordner("Fotos-Ordner", "data/fotos")
+
+    # Projektangaben (optional, erscheinen auf Titelseite)
     args.baustelle = _frage(
         "Projektname / Baustelle",
         getattr(args, "baustelle", "") or "",
