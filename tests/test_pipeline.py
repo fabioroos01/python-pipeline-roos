@@ -7,12 +7,10 @@ Ausfuehren:
 """
 
 import tempfile
-from datetime import datetime
 from pathlib import Path
 
 from format import _bereinige_text, _gruppiere_segmente
 from export import _format_zeit
-from match import AudioInfo, FotoInfo, matche_fotos
 from main import _lese_env
 
 
@@ -66,42 +64,6 @@ def test_zeitformat_minuten_sekunden():
 
 def test_zeitformat_null():
     assert _format_zeit(0.0) == "00:00"
-
-
-# ---------------------------------------------------------------------------
-# match.py
-# ---------------------------------------------------------------------------
-
-def test_foto_innerhalb_aufnahme_ist_exakt():
-    """Foto das waehrend der Aufnahme gemacht wurde → Konfidenz 'exakt'."""
-    audio = AudioInfo(
-        pfad=Path("test.m4a"),
-        startzeitpunkt=datetime(2026, 5, 22, 17, 0, 0),
-        dauer_sekunden=120.0,
-        startzeitpunkt_zuverlaessig=True,
-    )
-    foto = FotoInfo(
-        pfad=Path("foto.jpg"),
-        aufnahmezeitpunkt=datetime(2026, 5, 22, 17, 1, 0),  # 60s nach Start
-    )
-    mappings = matche_fotos([foto], [audio])
-    assert mappings[0].konfidenz == "exakt"
-
-
-def test_foto_weit_entfernt_ist_nicht_zuordenbar():
-    """Foto 1 Stunde nach der Aufnahme → nicht zuordenbar."""
-    audio = AudioInfo(
-        pfad=Path("test.m4a"),
-        startzeitpunkt=datetime(2026, 5, 22, 17, 0, 0),
-        dauer_sekunden=60.0,
-        startzeitpunkt_zuverlaessig=True,
-    )
-    foto = FotoInfo(
-        pfad=Path("foto.jpg"),
-        aufnahmezeitpunkt=datetime(2026, 5, 22, 18, 0, 0),
-    )
-    mappings = matche_fotos([foto], [audio])
-    assert mappings[0].konfidenz == "nicht_zuordenbar"
 
 
 # ---------------------------------------------------------------------------

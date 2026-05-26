@@ -189,14 +189,8 @@ def _interaktive_eingabe(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def cmd_match(args: argparse.Namespace) -> None:
-    """Modul 1: Ordnet Fotos den Audio-Dateien per Zeitstempel zu."""
-    from match import (
-        drucke_zusammenfassung,
-        lese_alle_audios,
-        lese_alle_fotos,
-        matche_fotos,
-        speichere_mapping,
-    )
+    """Modul 1: Liest EXIF-Zeitstempel der Fotos und speichert sie fuer den Export."""
+    from match import lese_alle_audios, lese_alle_fotos, speichere_mapping
 
     audio_ordner = Path(args.audio)
     ausgabe = Path(args.ausgabe)
@@ -214,7 +208,7 @@ def cmd_match(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     for a in audios:
-        quelle = "eingebettet" if a.startzeitpunkt_zuverlaessig else "Dateisystem (Fallback!)"
+        quelle = "Dateiname" if a.startzeitpunkt_zuverlaessig else "Dateisystem (Fallback!)"
         print(f"  {a.pfad.name}: {a.startzeitpunkt.strftime('%Y-%m-%d %H:%M:%S')} [{quelle}]")
 
     # Fotos sind optional — Pipeline laeuft auch ohne
@@ -226,17 +220,16 @@ def cmd_match(args: argparse.Namespace) -> None:
         fotos = lese_alle_fotos(foto_ordner)
         print(f"  {len(fotos)} Foto(s) gefunden")
     else:
-        print("\nKein Foto-Ordner angegeben — Matching wird ohne Fotos gespeichert.")
+        print("\nKein Foto-Ordner angegeben — wird ohne Fotos fortgefahren.")
         fotos = []
 
-    if fotos:
-        mappings = matche_fotos(fotos, audios)
-        drucke_zusammenfassung(mappings)
-    else:
-        mappings = []
-
+    from match import FotoMapping
+    mappings = [
+        FotoMapping(foto_pfad=str(f.pfad), foto_zeitpunkt=f.aufnahmezeitpunkt.isoformat())
+        for f in fotos
+    ]
     speichere_mapping(mappings, ausgabe)
-    print(f"\nMapping gespeichert: {ausgabe}")
+    print(f"\nFoto-Liste gespeichert: {ausgabe}")
 
 
 def cmd_transcribe(args: argparse.Namespace) -> None:
@@ -367,21 +360,14 @@ def _schreibe_json(daten: list, pfad: Path) -> None:
 
 def _erstelle_foto_nur_mapping(foto_ordner: Path, ausgabe_pfad: Path) -> None:
     """
-    Erstellt ein Foto-Mapping ohne Audio (Foto-only-Modus).
-    Alle Fotos werden als 'nicht_zuordenbar' gespeichert und
-    im Export chronologisch nach EXIF-Zeitstempel eingeordnet.
+    Erstellt eine Foto-Liste ohne Audio (Foto-only-Modus).
+    Fotos werden nach EXIF-Zeitstempel sortiert und chronologisch eingeordnet.
     """
     from match import FotoMapping, lese_alle_fotos, speichere_mapping
 
     fotos = lese_alle_fotos(foto_ordner)
     mappings = [
-        FotoMapping(
-            foto_pfad=str(f.pfad),
-            foto_zeitpunkt=f.aufnahmezeitpunkt.isoformat(),
-            audio_datei=None,
-            position_sekunden=None,
-            konfidenz="nicht_zuordenbar",
-        )
+        FotoMapping(foto_pfad=str(f.pfad), foto_zeitpunkt=f.aufnahmezeitpunkt.isoformat())
         for f in fotos
     ]
     speichere_mapping(mappings, ausgabe_pfad)
