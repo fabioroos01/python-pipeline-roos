@@ -1,6 +1,5 @@
 """
 Modul 2: Transkribiert M4A-Aufnahmen via OpenAI Whisper API.
-
 Die API liefert neben dem Volltext auch Segment-Timestamps (verbose_json),
 die spaeter fuer die zeitliche Zuordnung von Fotos benoetigt werden.
 Maximale Dateigroesse: 25 MB (OpenAI-Limit).
@@ -44,18 +43,14 @@ class Transkript:
 def transkribiere(audio_pfad: Path, api_key: str, modell: str = "whisper-1") -> Transkript:
     """
     Transkribiert eine M4A-Datei via OpenAI Whisper API.
-
-    Sendet die Audiodatei an die Whisper API und gibt ein Transkript-Objekt
+    Sendet die Audiodatei an die API und gibt ein Transkript-Objekt
     mit allen Segmenten und deren Zeitstempeln zurueck.
-
     Args:
         audio_pfad: Pfad zur M4A-Datei (muss existieren).
         api_key:    Gueltiger OpenAI API-Key (aus .env).
         modell:     Whisper-Modell (default: 'whisper-1').
-
     Returns:
         Transkript-Objekt mit Segmenten und Zeitstempeln.
-
     Raises:
         RuntimeError: Bei API-Fehlern (falscher Key, kein Internet, Limit).
         ImportError:  Wenn das openai-Paket nicht installiert ist.

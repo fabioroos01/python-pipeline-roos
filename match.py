@@ -1,25 +1,32 @@
 """
 Modul 1: Ordnet Fotos den richtigen M4A-Aufnahmen per Zeitstempel zu.
-
 Ablauf:
-  1. Startzeitpunkt jeder M4A-Datei aus den Metadaten lesen
-     (Prioritaet: day-Tag > mvhd-Atom > Dateisystem-Fallback)
+  1. Startzeitpunkt jeder M4A-Datei aus dem Dateinamen lesen
+     Erwartet Format: YYYYMMDD-HHMMSS.m4a (z.B. 20260526-000723.m4a)
+     Fallback: Dateisystem-mtime (mit Warnung)
   2. EXIF-Zeitstempel aller Fotos lesen
   3. Jedes Foto der zeitlich passenden Audio-Datei zuordnen
 """
 
 import json
 import os
-import re
-import struct
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
 from mutagen.mp4 import MP4
 from PIL import Image
 from PIL.ExifTags import TAGS
+
+# HEIC/HEIF-Unterstuetzung aktivieren (iPhone-Standardformat seit iOS 11)
+# pillow-heif registriert sich als Pillow-Plugin → danach oeffnet Image.open()
+# auch .heic/.heif-Dateien inkl. EXIF-Daten
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass  # Ohne pillow-heif werden HEIC-Dateien uebersprungen
 
 
 # ---------------------------------------------------------------------------
@@ -33,19 +40,7 @@ TOLERANZ_SEKUNDEN = 10
 Konfidenz = Literal["exakt", "innerhalb_toleranz", "nicht_zuordenbar"]
 
 AUDIO_ENDUNGEN = ("*.m4a", "*.M4A")
-FOTO_ENDUNGEN  = ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG")
-
-# Datumsformate, die im ©day-Tag vorkommen koennen
-_M4A_DATUMSFORMATE = (
-    "%Y-%m-%dT%H:%M:%S",
-    "%Y-%m-%dT%H:%M:%S.%f",
-    "%Y-%m-%d %H:%M:%S",
-    "%Y-%m-%d",
-)
-
-# MP4-Epoch beginnt am 1.1.1904 — Offset zur Unix-Epoch (1.1.1970) in Sekunden
-_MAC_EPOCH_OFFSET = 2082844800
-
+FOTO_ENDUNGEN  = ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.heic", "*.HEIC", "*.heif", "*.HEIF")
 
 # ---------------------------------------------------------------------------
 # Datenklassen
@@ -78,121 +73,37 @@ class FotoMapping:
 
 
 # ---------------------------------------------------------------------------
-# M4A-Metadaten lesen
+# M4A-Zeitstempel aus Dateinamen lesen
 # ---------------------------------------------------------------------------
 
-def _lese_m4a_zeitpunkt(pfad: Path) -> datetime | None:
+def _lese_dateiname_zeitpunkt(pfad: Path) -> datetime | None:
     """
-    Liest das Aufnahmedatum aus dem eingebetteten ©day-Tag der M4A-Datei.
-
-    iPhone Voice Memos speichert den Aufnahmezeitpunkt direkt im Dateiinhalt.
-    Dieser Wert bleibt beim Kopieren (AirDrop, USB, iCloud) unveraendert —
-    im Gegensatz zu Dateisystem-Timestamps, die sich beim Kopieren aendern.
-
-    Der Tag kann verschiedene Formate haben und optional einen Timezone-Offset
-    enthalten (z.B. "2026-05-22T17:24:40+0200"). Der Offset wird entfernt,
-    damit die Lokalzeit direkt mit EXIF-Zeitstempeln verglichen werden kann.
-
-    Gibt None zurueck wenn der Tag fehlt oder nicht parsbar ist.
+    Parst den Aufnahmestartzeitpunkt direkt aus dem Dateinamen.
+    Erwartet Format: YYYYMMDD-HHMMSS (z.B. 20260526-000723.m4a).
+    Die ersten 15 Zeichen des Dateinamens (ohne Endung) werden ausgewertet.
+    Gibt None zurueck wenn das Format nicht passt.
     """
     try:
-        audio = MP4(pfad)
-        if not audio.tags:
-            return None
-
-        # ©day-Tag auslesen (\xa9day = Unicode-Zeichen für ©day)
-        day_tag = audio.tags.get("\xa9day")
-        if not day_tag:
-            return None
-
-        day_str = (day_tag[0] if isinstance(day_tag, list) else str(day_tag)).strip()
-
-        # Timezone-Offset entfernen (z.B. "+0200", "+02:00" oder "Z")
-        # Ergebnis ist Lokalzeit, identisch mit EXIF-Zeitstempeln der Fotos
-        day_str = re.sub(r"([+-]\d{2}:?\d{2}|Z)$", "", day_str).strip()
-
-        # Verschiedene Datumsformate durchprobieren
-        for fmt in _M4A_DATUMSFORMATE:
-            try:
-                return datetime.strptime(day_str, fmt)
-            except ValueError:
-                continue
-
-        return None  # Kein Format hat gepasst
-    except Exception:
-        return None
-
-
-def _lese_mvhd_zeitpunkt(pfad: Path) -> datetime | None:
-    """
-    Liest den Aufnahmezeitpunkt direkt aus dem binaeren MP4-Container (mvhd-Atom).
-
-    Das mvhd-Atom (Movie Header) ist ein fixes Dateiformat-Element jeder MP4-Datei.
-    Es enthaelt eine creation_time, die als Sekunden seit der Mac-Epoch (1.1.1904)
-    gespeichert ist.
-
-    WICHTIG: Diese creation_time entspricht dem ENDzeitpunkt der Aufnahme,
-    nicht dem Start. Der Startzeitpunkt muss daher durch Abzug der Dauer
-    berechnet werden (geschieht in lese_audio_info).
-
-    Vorgehen (binaere Analyse):
-      1. b"mvhd" als Marker im Bytestrom suchen
-      2. Version lesen (0 = 4 Byte Zeit, 1 = 8 Byte Zeit)
-      3. Rohwert von Mac-Epoch (1904) auf Unix-Epoch (1970) umrechnen
-
-    Gibt None zurueck wenn das Atom nicht gefunden wird oder der Wert 0 ist.
-    """
-    try:
-        with open(pfad, "rb") as f:
-            data = f.read()
-
-        # mvhd-Marker im Binaerstrom suchen
-        idx = data.find(b"mvhd")
-        if idx == -1:
-            return None
-
-        # Bytes nach dem Marker: [4 Byte Flags] [Version] [creation_time]
-        pos = idx + 4
-        version = data[pos]
-        pos += 4  # 4 Bytes Flags ueberspringen
-
-        # Version 0: creation_time als 32-Bit Integer (Big Endian)
-        # Version 1: creation_time als 64-Bit Integer (Big Endian)
-        if version == 0:
-            creation_raw = struct.unpack(">I", data[pos:pos + 4])[0]
-        else:
-            creation_raw = struct.unpack(">Q", data[pos:pos + 8])[0]
-
-        if creation_raw == 0:
-            return None  # Kein gueltiger Zeitstempel gesetzt
-
-        # Mac-Epoch (1.1.1904) auf Unix-Epoch (1.1.1970) umrechnen
-        return datetime.fromtimestamp(creation_raw - _MAC_EPOCH_OFFSET)
-
-    except Exception:
+        return datetime.strptime(pfad.stem[:15], "%Y%m%d-%H%M%S")
+    except ValueError:
         return None
 
 
 def lese_audio_info(pfad: Path) -> AudioInfo:
     """
     Liest Startzeitpunkt und Dauer einer M4A-Datei.
-
-    Versucht den Startzeitpunkt in dieser Prioritaet zu bestimmen:
-      1. ©day-Tag (direkt der Startzeitpunkt, am zuverlaessigsten)
-      2. mvhd creation_time minus Dauer (ENDzeitpunkt - Dauer = Start)
-      3. Dateisystem-Timestamp (unzuverlaessig, aendert sich beim Kopieren)
-
+    Zeitquelle: Dateiname im Format YYYYMMDD-HHMMSS.m4a.
+    Fallback: Dateisystem-mtime (mit Warnung, wenn Format nicht passt).
     Args:
         pfad: Pfad zur M4A-Datei.
-
     Returns:
-        AudioInfo mit Startzeitpunkt, Dauer und Verlaesslichkeits-Flag.
+        AudioInfo mit Startzeitpunkt, Dauer und Zuverlaessigkeits-Flag.
     """
     audio = MP4(pfad)
     dauer_sekunden = float(audio.info.length)
 
-    # Versuch 1: ©day-Tag
-    zeitpunkt = _lese_m4a_zeitpunkt(pfad)
+    # Zeitstempel aus Dateinamen (YYYYMMDD-HHMMSS)
+    zeitpunkt = _lese_dateiname_zeitpunkt(pfad)
     if zeitpunkt:
         return AudioInfo(
             pfad=pfad,
@@ -201,24 +112,16 @@ def lese_audio_info(pfad: Path) -> AudioInfo:
             startzeitpunkt_zuverlaessig=True,
         )
 
-    # Versuch 2: mvhd creation_time (= ENDzeitpunkt → Start berechnen)
-    endzeitpunkt = _lese_mvhd_zeitpunkt(pfad)
-    if endzeitpunkt:
-        startzeitpunkt = endzeitpunkt - timedelta(seconds=dauer_sekunden)
-        return AudioInfo(
-            pfad=pfad,
-            startzeitpunkt=startzeitpunkt,
-            dauer_sekunden=dauer_sekunden,
-            startzeitpunkt_zuverlaessig=True,
-        )
-
-    # Versuch 3: Dateisystem-Timestamp (Fallback, unzuverlaessig)
-    # st_birthtime = Erstellungszeit (macOS), st_mtime = letzte Aenderung (Linux)
-    stat = os.stat(pfad)
-    ts = getattr(stat, "st_birthtime", stat.st_mtime)
+    # Fallback: Dateisystem mtime (Warnung ausgeben)
+    mtime = datetime.fromtimestamp(os.path.getmtime(pfad))
+    print(
+        f"  Warnung: '{pfad.name}' — Dateinamen-Format nicht erkannt "
+        f"(erwartet: YYYYMMDD-HHMMSS.m4a).\n"
+        "    Verwende Dateisystem-mtime als Fallback."
+    )
     return AudioInfo(
         pfad=pfad,
-        startzeitpunkt=datetime.fromtimestamp(ts),
+        startzeitpunkt=mtime,
         dauer_sekunden=dauer_sekunden,
         startzeitpunkt_zuverlaessig=False,
     )
@@ -227,7 +130,6 @@ def lese_audio_info(pfad: Path) -> AudioInfo:
 def lese_alle_audios(ordner: Path) -> list[AudioInfo]:
     """
     Liest alle M4A-Dateien in einem Ordner.
-
     Defekte oder nicht lesbare Dateien werden mit einer Warnung uebersprungen,
     damit die Pipeline bei einem einzelnen Problem nicht abbricht.
     """
@@ -250,23 +152,23 @@ def lese_alle_audios(ordner: Path) -> list[AudioInfo]:
 def lese_exif_zeitpunkt(pfad: Path) -> FotoInfo:
     """
     Liest den EXIF-Aufnahmezeitpunkt (DateTimeOriginal) eines Fotos.
-
     Args:
-        pfad: Pfad zur JPEG-Datei.
-
+        pfad: Pfad zur Foto-Datei (JPEG oder HEIC).
     Returns:
         FotoInfo mit Aufnahmezeitpunkt.
-
     Raises:
         ValueError: Wenn keine EXIF-Daten oder kein Zeitstempel vorhanden.
     """
     with Image.open(pfad) as img:
-        exif_data = img._getexif()
+        # getexif() funktioniert fuer JPEG und HEIC (im Gegensatz zu _getexif())
+        exif_obj = img.getexif()
 
-    if not exif_data:
+    if not exif_obj:
         raise ValueError(f"Keine EXIF-Daten in '{pfad.name}'")
 
-    # EXIF-Tag-IDs in lesbare Namen umwandeln (z.B. 36867 -> "DateTimeOriginal")
+    exif_data = dict(exif_obj)
+
+    # EXIF-Tag-IDs in lesbare Namen umwandeln (z.B. 36867 → "DateTimeOriginal")
     tag_map = {TAGS.get(tag, tag): wert for tag, wert in exif_data.items()}
 
     # DateTimeOriginal bevorzugen, DateTime als Fallback
@@ -281,8 +183,7 @@ def lese_exif_zeitpunkt(pfad: Path) -> FotoInfo:
 
 def lese_alle_fotos(ordner: Path) -> list[FotoInfo]:
     """
-    Liest EXIF-Zeitstempel aller JPG/JPEG-Fotos in einem Ordner.
-
+    Liest EXIF-Zeitstempel aller Fotos (JPG, HEIC) in einem Ordner.
     Fotos ohne gueltigen EXIF-Zeitstempel werden mit Warnung uebersprungen.
     """
     fotos = []
@@ -304,18 +205,15 @@ def lese_alle_fotos(ordner: Path) -> list[FotoInfo]:
 def matche_fotos(fotos: list[FotoInfo], audios: list[AudioInfo]) -> list[FotoMapping]:
     """
     Ordnet jedes Foto der zeitlich passenden Audio-Datei zu.
-
     Algorithmus pro Foto:
       1. Liegt der Foto-Timestamp innerhalb [audio_start, audio_ende]?
          → Konfidenz "exakt", relative Position in Sekunden berechnen
       2. Ist der kleinste Abstand zu einem Audio-Fenster <= TOLERANZ_SEKUNDEN?
          → Konfidenz "innerhalb_toleranz"
       3. Sonst: Konfidenz "nicht_zuordenbar"
-
     Args:
         fotos:  Liste von FotoInfo-Objekten (mit EXIF-Zeitstempel).
         audios: Liste von AudioInfo-Objekten (mit Startzeitpunkt und Dauer).
-
     Returns:
         Liste von FotoMapping-Objekten, eines pro Foto.
     """
@@ -378,14 +276,16 @@ def drucke_zusammenfassung(mappings: list[FotoMapping]) -> None:
     exakt    = sum(1 for m in mappings if m.konfidenz == "exakt")
     toleranz = sum(1 for m in mappings if m.konfidenz == "innerhalb_toleranz")
     nicht    = sum(1 for m in mappings if m.konfidenz == "nicht_zuordenbar")
+    mit_audio = exakt + toleranz
 
     print(f"\nMatching-Ergebnis ({len(mappings)} Fotos):")
-    print(f"  Exakt zugeordnet:     {exakt}")
-    print(f"  Innerhalb Toleranz:   {toleranz}")
-    print(f"  Nicht zuordenbar:     {nicht}")
+    print(f"  Mit Audiozuordnung (erscheinen in den Notizen):      {mit_audio}")
+    print(f"    - Exakt (waehrend der Aufnahme):                   {exakt}")
+    print(f"    - Nahe  (innerhalb {TOLERANZ_SEKUNDEN}s Toleranz):                 {toleranz}")
+    print(f"  Ohne Audiozuordnung (chronologisch eingeordnet):     {nicht}")
 
     if nicht > 0:
-        print("\n  Nicht zuordenbare Fotos:")
+        print("\n  Fotos ohne Audiozuordnung (werden chronologisch platziert):")
         for m in mappings:
             if m.konfidenz == "nicht_zuordenbar":
                 print(f"    - {Path(m.foto_pfad).name}  ({m.foto_zeitpunkt})")

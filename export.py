@@ -1,16 +1,33 @@
-"""Modul 4: Erstellt einen strukturierten Word-Bericht aus Befunden und Fotos."""
+"""
+Modul 4: Erstellt einen strukturierten Word-Bericht aus Befunden und Fotos.
+Ablauf:
+  1. Titelseite mit Logo, Baustelle, Datum und Aufnehmer
+  2. Notizseiten: chronologisch gemischt
+     - Pro Audio-Aufnahme: Unterueberschrift + Stichpunkte
+     - Fotos erscheinen direkt nach dem Abschnitt, in dem sie zeitlich liegen
+  3. Fotos vor dem ersten Audio erscheinen am Seitenanfang
+"""
 
-from datetime import datetime
+from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 
 from docx import Document
+from PIL import Image
+
+# HEIC/HEIF-Unterstuetzung aktivieren (gleich wie in match.py)
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Cm, Inches, Pt, RGBColor
+from docx.shared import Cm, Pt, RGBColor
 
 # Pfad zum Logo (relativ zum Projektverzeichnis)
-_LOGO_PFAD = Path("Templates/Logo_Emch_Berger.png")
+_LOGO_PFAD = Path("templates/Logo_Emch_Berger.png")
 
 _FOOTER_TEXT = (
     "Emch+Berger WSB AG  |  "
@@ -18,13 +35,18 @@ _FOOTER_TEXT = (
     "ebwsb@emchberger.ch  |  www.emchberger.ch"
 )
 
+# Breite eines Fotos in der 2-spaltige Galerie
+# A4 (21cm) - linker Rand (3cm) - rechter Rand (2cm) = 16cm Nutzbreite
+# 2 × 7.5cm = 15cm + ~1cm Zellenabstand = 16cm
+_FOTO_BREITE = Cm(7.5)
+
 
 # ---------------------------------------------------------------------------
-# Hilfsfunktionen
+# Hilfsfunktionen fuer Word-XML
 # ---------------------------------------------------------------------------
 
 def _keine_rahmen(table) -> None:
-    """Entfernt alle sichtbaren Rahmen einer Tabelle."""
+    """Entfernt alle sichtbaren Rahmen einer Tabelle via XML-Manipulation."""
     for row in table.rows:
         for cell in row.cells:
             tc = cell._tc
@@ -64,43 +86,78 @@ def _linie_ueber_absatz(paragraph) -> None:
 
 
 def _format_zeit(sekunden: float) -> str:
-    """Formatiert Sekunden als MM:SS-String."""
+    """Formatiert Sekunden als MM:SS-String. Beispiel: 90.0 → '01:30'"""
     minuten = int(sekunden) // 60
     sek = int(sekunden) % 60
     return f"{minuten:02d}:{sek:02d}"
 
 
-def _suche_passendes_foto(befund: dict, mapping: list[dict]) -> Path | None:
+# ---------------------------------------------------------------------------
+# Fotogalerie
+# ---------------------------------------------------------------------------
+
+def _foto_fuer_word(pfad: Path) -> str | BytesIO:
     """
-    Sucht das zeitlich passende Foto fuer einen Befund im Mapping.
-
-    Gibt das Foto zurueck, das am naechsten an der Befundposition liegt
-    (max. 30 Sekunden Abstand).
+    Bereitet ein Foto fuer das Einfuegen ins Word-Dokument vor.
+    JPEG/PNG: Pfad direkt weitergeben.
+    HEIC/HEIF: als JPEG konvertieren, da Word auf Windows HEIC nicht anzeigt.
+    Returns:
+        Pfad-String (JPEG/PNG) oder BytesIO-Objekt (HEIC konvertiert).
     """
-    audio_pfad = befund.get("audio_pfad", "")
-    befund_start = befund.get("start", 0.0)
-    befund_ende = befund.get("ende", 0.0)
+    if pfad.suffix.lower() in (".heic", ".heif"):
+        img = Image.open(pfad).convert("RGB")
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        buf.seek(0)
+        return buf
+    return str(pfad)
 
-    bestes_foto = None
-    kleinster_abstand = float("inf")
 
-    for eintrag in mapping:
-        if eintrag.get("audio_datei") != audio_pfad:
-            continue
-        if eintrag.get("konfidenz") == "nicht_zuordenbar":
-            continue
+def _zeige_fotos_galerie(doc: Document, foto_pfade: list[Path]) -> None:
+    """
+    Fuegt Fotos als Galerie mit 2 Fotos pro Zeile ein.
+    Layout: Tabelle ohne Rahmen, 2 Spalten je 7.5 cm.
+    Jedes Foto wird zentriert angezeigt, darunter der Dateiname als Beschriftung.
+    Bei ungerader Anzahl bleibt die letzte Zelle leer.
+    Args:
+        doc:        Das Word-Dokument.
+        foto_pfade: Liste der Foto-Pfade in der gewuenschten Reihenfolge.
+    """
+    if not foto_pfade:
+        return
 
-        position = eintrag.get("position_sekunden") or 0.0
+    # Fotos paarweise gruppieren (je 2 pro Tabellenzeile)
+    paare = [foto_pfade[i:i + 2] for i in range(0, len(foto_pfade), 2)]
 
-        if befund_start <= position <= befund_ende:
-            return Path(eintrag["foto_pfad"])
+    tbl = doc.add_table(rows=len(paare), cols=2)
+    _keine_rahmen(tbl)
 
-        abstand = min(abs(position - befund_start), abs(position - befund_ende))
-        if abstand < kleinster_abstand:
-            kleinster_abstand = abstand
-            bestes_foto = Path(eintrag["foto_pfad"])
+    for zeile_idx, paar in enumerate(paare):
+        for spalte_idx, pfad in enumerate(paar):
+            cell = tbl.cell(zeile_idx, spalte_idx)
 
-    return bestes_foto if kleinster_abstand < 30 else None
+            # Foto einfuegen (HEIC wird automatisch zu JPEG konvertiert)
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            if pfad.exists():
+                p.add_run().add_picture(_foto_fuer_word(pfad), width=_FOTO_BREITE)
+            else:
+                r = p.add_run(f"[nicht gefunden: {pfad.name}]")
+                r.font.size = Pt(8)
+                r.font.italic = True
+
+            # Dateiname als kleine Bildunterschrift
+            caption = cell.add_paragraph(pfad.name)
+            caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            caption.runs[0].font.size = Pt(7)
+            caption.runs[0].font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
+            caption.runs[0].italic = True
+
+        # Leere Zelle wenn Foto-Anzahl ungerade
+        if len(paar) == 1:
+            tbl.cell(zeile_idx, 1).paragraphs[0].add_run("")
+
+    doc.add_paragraph()  # Abstand nach Galerie
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +167,6 @@ def _suche_passendes_foto(befund: dict, mapping: list[dict]) -> Path | None:
 def _setze_header_footer(doc: Document) -> None:
     """
     Setzt Header (Logo) und Footer (Adresse) fuer alle Seiten ab Seite 2.
-
     Die Titelseite (Seite 1) bekommt keinen Header/Footer,
     weil different_first_page_header_footer=True gesetzt wird.
     """
@@ -155,14 +211,9 @@ def _titelseite(
     projektnummer: str = "",
 ) -> None:
     """
-    Erstellt die Titelseite mit Logo, Baustelennamen, Datum und Aufnehmer.
-
-    Layout (angelehnt an Emch+Berger WSB Vorlage):
-      - Logo oben rechts
-      - Label "Begehungsprotokoll"
-      - Baustelle als Haupttitel (gross)
-      - Trennlinie
-      - Infotabelle: Projektnummer | Datum | Aufgenommen von
+    Erstellt die Titelseite mit Logo, Baustellenname, Datum und Aufnehmer.
+    Layout: Logo oben rechts, Label, Haupttitel, Trennlinie,
+    Infotabelle (Projektnummer, Datum, Aufgenommen von).
     """
     # Logo oben rechts
     logo_p = doc.add_paragraph()
@@ -195,7 +246,7 @@ def _titelseite(
 
     doc.add_paragraph()
 
-    # Infotabelle
+    # Datum formatieren (Fallback: heutiges Datum auf Deutsch)
     if datum:
         datum_text = datum
     else:
@@ -206,7 +257,7 @@ def _titelseite(
         heute = datetime.today()
         datum_text = f"{heute.day}. {_monate_de[heute.month]} {heute.year}"
 
-    # Zeilen: Projektnummer (nur wenn angegeben), Datum, Aufgenommen von
+    # Infotabelle: Projektnummer (nur wenn angegeben), Datum, Aufgenommen von
     zeilen = []
     if projektnummer:
         zeilen.append(("Projektnummer:", projektnummer))
@@ -225,7 +276,7 @@ def _titelseite(
         val.font.size = Pt(10)
         tbl.cell(row_idx, 1).width = Cm(12)
 
-    # Abstand und Fusszeile Titelseite
+    # Hinweis am Ende der Titelseite
     for _ in range(3):
         doc.add_paragraph()
 
@@ -237,45 +288,39 @@ def _titelseite(
 
 
 # ---------------------------------------------------------------------------
-# Befundseiten
+# Chronologische Notizseiten
 # ---------------------------------------------------------------------------
 
-def _befundseiten(
+def _zeige_audio_abschnitt(
     doc: Document,
+    audio_pfad: str,
     befunde: list[dict],
-    mapping: list[dict],
-) -> list[tuple[int, Path]]:
+    nr: int,
+    gesamt: int,
+) -> None:
     """
-    Schreibt die Befundseiten als Stichpunktliste.
-
-    Jede Gruppe (Pause > 2s) wird ein Bullet-Point.
-    Fotos werden als Verweis direkt unter dem jeweiligen Stichpunkt aufgefuehrt.
-    Gibt eine Liste von (Foto-Nummer, Foto-Pfad) fuer den Anhang zurueck.
+    Rendert einen Audio-Abschnitt: Unterueberschrift + Bullet-Points.
+    Args:
+        doc:        Das Word-Dokument.
+        audio_pfad: Dateipfad der Audio-Datei (fuer die Unterueberschrift).
+        befunde:    Alle Befunde dieser Audio-Datei.
+        nr:         Laufnummer des Abschnitts (1-basiert).
+        gesamt:     Gesamtzahl der Audio-Abschnitte.
     """
-    foto_liste: list[tuple[int, Path]] = []
-    foto_nr = 1
-    aktueller_ort = None
+    audio_name = Path(audio_pfad).stem
+    doc.add_paragraph()
 
-    h = doc.add_heading("Notizen", level=1)
-    h.runs[0].font.size = Pt(18)
-    h.runs[0].font.bold = True
-    h.runs[0].font.color.rgb = RGBColor(0, 0, 0)
+    # Unterueberschrift: Aufnahme 1 / 2 / ...
+    titel = f"Aufnahme {nr}: {audio_name}" if gesamt > 1 else f"Aufnahme: {audio_name}"
+    uh = doc.add_heading(titel, level=2)
+    uh.runs[0].font.size = Pt(12)
+    uh.runs[0].font.bold = True
+    uh.runs[0].font.color.rgb = RGBColor(0x30, 0x30, 0x30)
 
     for befund in befunde:
-        ort = befund.get("raum_hinweis")
-
-        # Neue Ortsbezeichnung als Unterueberschrift
-        if ort and ort != aktueller_ort:
-            doc.add_paragraph()
-            uh = doc.add_heading(ort, level=2)
-            uh.runs[0].font.size = Pt(12)
-            uh.runs[0].font.color.rgb = RGBColor(0x30, 0x30, 0x30)
-            aktueller_ort = ort
-
-        # Stichpunkt
+        # Stichpunkt mit Transkript-Text
         bullet = doc.add_paragraph(style="List Bullet")
-        bullet_r = bullet.add_run(befund.get("text", ""))
-        bullet_r.font.size = Pt(10)
+        bullet.add_run(befund.get("text", "")).font.size = Pt(10)
 
         # Zeitstempel (klein, grau, eingerueckt)
         start = befund.get("start", 0.0)
@@ -287,50 +332,107 @@ def _befundseiten(
         zeit_p.paragraph_format.space_before = Pt(0)
         zeit_p.paragraph_format.space_after = Pt(2)
 
-        # Fotoverweis
-        foto = _suche_passendes_foto(befund, mapping)
-        if foto:
-            ref_p = doc.add_paragraph(f"       → Foto {foto_nr}  ({foto.name})")
-            ref_p.runs[0].font.size = Pt(9)
-            ref_p.runs[0].italic = True
-            ref_p.runs[0].font.color.rgb = RGBColor(0x20, 0x20, 0x90)
-            ref_p.paragraph_format.space_after = Pt(6)
-            foto_liste.append((foto_nr, foto))
-            foto_nr += 1
 
-    return foto_liste
+def _erstelle_notizseiten(
+    doc: Document,
+    befunde: list[dict],
+    mapping: list[dict],
+) -> None:
+    """
+    Erstellt alle Notizseiten in chronologischer Reihenfolge.
+    Algorithmus:
+      1. Befunde nach Audio-Datei gruppieren
+      2. Startzeitpunkte aus Dateinamen lesen (via match.lese_audio_info)
+      3. Audios chronologisch sortieren
+      4. Fotos in Slots einteilen: Slot i = Fotos nach dem Start von Audio i
+      5. Rendern: Slot-1 | Audio 0 + Slot 0 | Audio 1 + Slot 1 | ...
+    Fotos ohne Zeitstempel werden ans Ende gehaengt.
+    Args:
+        doc:     Das Word-Dokument.
+        befunde: Strukturierte Befunde aus format.py (mit audio_pfad, start, ende).
+        mapping: Foto-Audio-Mapping aus match.py als Liste von Dicts.
+    """
+    # 1. Befunde nach Audio-Datei gruppieren (Reihenfolge innerhalb Audio beibehalten)
+    befunde_pro_audio: dict[str, list[dict]] = {}
+    for b in befunde:
+        ap = b.get("audio_pfad", "")
+        befunde_pro_audio.setdefault(ap, []).append(b)
 
+    # 2. Audio-Startzeiten aus den Dateinamen lesen (Format: YYYYMMDD-HHMMSS)
+    audio_infos: dict[str, tuple[datetime, float]] = {}  # pfad → (start, dauer)
+    for pfad_str in befunde_pro_audio:
+        pfad = Path(pfad_str)
+        if pfad.exists():
+            try:
+                from match import lese_audio_info
+                info = lese_audio_info(pfad)
+                audio_infos[pfad_str] = (info.startzeitpunkt, info.dauer_sekunden)
+            except Exception:
+                pass  # Datei nicht lesbar → Reihenfolge aus Befund-Liste
 
-# ---------------------------------------------------------------------------
-# Fotoanhang
-# ---------------------------------------------------------------------------
+    # 3. Audios chronologisch sortieren (Fallback: Reihenfolge aus befunde_pro_audio)
+    sortierte_audios = sorted(
+        befunde_pro_audio.keys(),
+        key=lambda ap: audio_infos.get(ap, (datetime.min, 0.0))[0],
+    )
+    n = len(sortierte_audios)
 
-def _fotoanhang(doc: Document, fotos: list[tuple[int, Path]]) -> None:
-    """Fuegt den Fotoanhang mit allen Fotos am Ende des Dokuments ein."""
-    doc.add_page_break()
+    # 4. Fotos chronologisch sortieren und Slots zuweisen
+    #    Slot -1 = vor erstem Audio, Slot i = nach dem Start von Audio i
+    alle_foto_eintraege = sorted(
+        mapping,
+        key=lambda m: m.get("foto_zeitpunkt", ""),
+    )
 
-    h = doc.add_heading("Fotoanhang", level=1)
+    foto_slots: dict[int, list[Path]] = {i: [] for i in range(-1, n)}
+
+    for eintrag in alle_foto_eintraege:
+        try:
+            foto_dt = datetime.fromisoformat(eintrag["foto_zeitpunkt"])
+        except (KeyError, ValueError):
+            # Kein Zeitstempel: ans Ende haengen
+            foto_slots[n - 1].append(Path(eintrag["foto_pfad"]))
+            continue
+
+        foto_pfad = Path(eintrag["foto_pfad"])
+
+        # Letzten Audio-Start suchen, der noch vor (oder gleichzeitig mit) dem Foto liegt
+        slot = -1
+        for i, ap in enumerate(sortierte_audios):
+            if ap not in audio_infos:
+                continue
+            audio_start, _ = audio_infos[ap]
+            if foto_dt >= audio_start:
+                slot = i
+
+        foto_slots[slot].append(foto_pfad)
+
+    # 5. Dokument rendern
+    foto_only = (n == 0)  # Kein Audio → reiner Foto-Bericht
+
+    ueberschrift = "Fotogalerie" if foto_only else "Notizen"
+    h = doc.add_heading(ueberschrift, level=1)
     h.runs[0].font.size = Pt(18)
     h.runs[0].font.bold = True
     h.runs[0].font.color.rgb = RGBColor(0, 0, 0)
 
-    for nr, pfad in fotos:
-        nr_p = doc.add_paragraph()
-        nr_r = nr_p.add_run(f"Foto {nr}")
-        nr_r.font.bold = True
-        nr_r.font.size = Pt(10)
+    # Fotos vor dem ersten Audio (Slot -1)
+    if foto_slots.get(-1):
+        if not foto_only:
+            # Nur Kontexthinweis anzeigen wenn es auch Audio-Abschnitte gibt
+            hinweis = doc.add_paragraph("Fotos vor Beginn der Aufnahmen:")
+            hinweis.runs[0].font.size = Pt(9)
+            hinweis.runs[0].italic = True
+            hinweis.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+        _zeige_fotos_galerie(doc, foto_slots[-1])
 
-        if pfad.exists():
-            doc.add_picture(str(pfad), width=Inches(5.5))
-            bildp = doc.add_paragraph(pfad.name)
-            bildp.runs[0].font.size = Pt(8)
-            bildp.runs[0].italic = True
-        else:
-            fehler_p = doc.add_paragraph(f"[Datei nicht gefunden: {pfad.name}]")
-            fehler_p.runs[0].font.size = Pt(9)
-            fehler_p.runs[0].italic = True
+    # Audio-Abschnitte + zugehoerige Fotos (Slot i)
+    for i, ap in enumerate(sortierte_audios):
+        _zeige_audio_abschnitt(doc, ap, befunde_pro_audio[ap], i + 1, n)
 
-        doc.add_paragraph()
+        fotos_nach_audio = foto_slots.get(i, [])
+        if fotos_nach_audio:
+            _zeige_fotos_galerie(doc, fotos_nach_audio)
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +443,6 @@ def erstelle_bericht(
     befunde: list[dict],
     mapping: list[dict],
     ausgabe_pfad: Path,
-    titel: str = "Begehungsprotokoll",
     datum: str = "",
     baustelle: str = "",
     aufnehmer: str = "",
@@ -349,21 +450,20 @@ def erstelle_bericht(
 ) -> None:
     """
     Erstellt einen Word-Bericht mit Befunden und Fotos.
-
-    Reihenfolge: Titelseite → Notizseiten (Stichpunkte) → Fotoanhang.
-
+    Reihenfolge: Titelseite, dann Notizseiten chronologisch mit eingebetteten Fotos.
+    Fotos erscheinen dort, wo sie zeitlich aufgenommen wurden.
     Args:
         befunde:       Strukturierte Befunde aus format.py.
         mapping:       Foto-Audio-Mapping aus match.py (kann leer sein).
         ausgabe_pfad:  Pfad zur Ausgabedatei (.docx).
-        titel:         Wird nicht mehr direkt verwendet (baustelle ersetzt es).
-        datum:         Datum als String. Leer = aus Audio-Metadaten oder heute.
+        datum:         Datum als String. Leer = aus Dateinamen oder heute.
         baustelle:     Name der Baustelle fuer die Titelseite.
         aufnehmer:     Name der Person, welche die Aufnahme gemacht hat.
-        projektnummer: Projektnummer fuer die Titelseite.
+        projektnummer: Projektnummer fuer die Titelseite (optional).
     """
     doc = Document()
 
+    # Seitenraender: A4 mit 3cm links, 2cm rechts → 16cm Nutzbreite
     section = doc.sections[0]
     section.top_margin = Cm(2.5)
     section.bottom_margin = Cm(2.5)
@@ -378,10 +478,9 @@ def erstelle_bericht(
         aufnehmer=aufnehmer,
         projektnummer=projektnummer,
     )
-    foto_liste = _befundseiten(doc, befunde, mapping)
 
-    if foto_liste:
-        _fotoanhang(doc, foto_liste)
+    # Chronologische Notizseiten mit eingebetteten Fotogalerien
+    _erstelle_notizseiten(doc, befunde, mapping)
 
     ausgabe_pfad.parent.mkdir(parents=True, exist_ok=True)
     doc.save(ausgabe_pfad)

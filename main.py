@@ -1,10 +1,8 @@
 """
 Audio- und Foto-Verarbeitungs-Pipeline
 HSLU Python for Beginners FS26 — Fabio Roos
-
 Verarbeitet Audio-Diktate und Fotos einer Begehung und erstellt
 automatisch einen strukturierten Word-Bericht.
-
 Aufruf:
     python ./main.py -h
     python ./main.py run --audio data/audio --fotos data/fotos
@@ -16,6 +14,11 @@ import sys
 from pathlib import Path
 
 AUDIO_ENDUNGEN = ("*.m4a", "*.M4A")
+
+
+def _ist_interaktiv() -> bool:
+    """True wenn das Programm von einem echten Terminal aus gestartet wurde."""
+    return sys.stdin.isatty()
 
 
 def _lese_env(env_pfad: Path = Path(".env")) -> dict:
@@ -34,7 +37,6 @@ def _lese_env(env_pfad: Path = Path(".env")) -> dict:
 def lade_config(config_pfad: Path = Path("config.json")) -> dict:
     """
     Liest Konfiguration aus config.json und API-Key aus .env.
-
     Der OPENAI_API_KEY wird aus der .env-Datei geladen (nicht aus config.json),
     damit er nicht versehentlich geteilt oder committed wird.
     """
@@ -67,7 +69,6 @@ def _finde_audiodateien(ordner: Path) -> list[Path]:
 def _frage(prompt: str, standard: str = "") -> str:
     """
     Fragt den Benutzer interaktiv nach einer Eingabe.
-
     Zeigt den Standardwert in eckigen Klammern an.
     Leere Eingabe (nur Enter) uebernimmt den Standardwert.
     """
@@ -76,79 +77,110 @@ def _frage(prompt: str, standard: str = "") -> str:
     return antwort if antwort else standard
 
 
-def _frage_ordner(prompt: str, standard: str = "") -> str:
+def _kurzer_pfad(pfad: Path) -> str:
     """
-    Fragt nach einem Pflicht-Ordnerpfad und wiederholt bis ein gueltiger Pfad kommt.
-
-    Verhindert, dass die Pipeline mit einem ungültigen Pfad gestartet wird.
+    Kuerzt einen langen Pfad fuer die Terminal-Anzeige auf die letzten 3 Teile.
+    Beispiel: /Users/fabio/.../python-pipeline-roos/data/audio
+              → .../python-pipeline-roos/data/audio
     """
-    while True:
-        pfad = _frage(prompt, standard)
-        if Path(pfad).is_dir():
-            return pfad
-        print(f"  Fehler: Ordner '{pfad}' nicht gefunden. Bitte erneut eingeben.")
+    parts = pfad.parts
+    if len(parts) > 3:
+        return ".../" + "/".join(parts[-3:])
+    return str(pfad)
 
 
 def _frage_ordner_optional(prompt: str, standard: str = "") -> str:
     """
-    Fragt nach einem optionalen Ordnerpfad.
-
-    Leere Eingabe oder ungültiger Pfad → leerer String (kein Fehler).
-    Wird fuer den Foto-Ordner verwendet, da Fotos nicht zwingend benoetigt werden.
+    Fragt interaktiv nach einem Ordnerpfad mit drei Optionen:
+      Enter     → Standard-Ordner verwenden
+      Pfad      → Eigenen Ordner angeben (z.B. per Drag & Drop)
+      Punkt (.) → Dieses Feld ueberspringen
+    Bei ungueltigem Pfad wird die Frage wiederholt.
     """
-    anzeige = f"{prompt} [{standard}] (Enter = ohne Fotos): "
-    antwort = input(anzeige).strip()
-    pfad = antwort if antwort else standard
-    if not pfad or not Path(pfad).is_dir():
-        if pfad:
-            print(f"  Hinweis: '{pfad}' nicht gefunden — Pipeline laeuft ohne Fotos.")
+    anzeige_standard = _kurzer_pfad(Path(standard)) if standard else "(kein Standard)"
+
+    print(f"\n{prompt}:")
+    print(f"  Standard  : {anzeige_standard}")
+    print(f"  Enter     = Standard uebernehmen")
+    print(f"  Pfad      = Eigenen Ordner angeben (oder per Drag & Drop ins Terminal ziehen)")
+    print(f"  Punkt (.) = Diesen Schritt ueberspringen")
+
+    while True:
+        antwort = input("  Eingabe   : ").strip()
+
+        # Punkt → explizit ueberspringen
+        if antwort == ".":
+            print(f"  → Wird uebersprungen.")
+            return ""
+
+        # Leere Eingabe → Standard verwenden
+        if not antwort:
+            if standard and Path(standard).is_dir():
+                print(f"  → Standard wird verwendet: {anzeige_standard}")
+                return standard
+            else:
+                print(f"  Fehler: Standard-Ordner nicht gefunden: {anzeige_standard}")
+                print(f"  Bitte Pfad angeben oder Punkt (.) zum Ueberspringen eingeben.")
+                continue
+
+        # Pfad angegeben → pruefen ob Ordner existiert
+        pfad = Path(antwort)
+        if pfad.is_dir():
+            print(f"  → Verwende: {_kurzer_pfad(pfad)}")
+            return str(pfad)
         else:
-            print("  Kein Foto-Ordner angegeben — Pipeline laeuft ohne Fotos.")
-        return ""
-    return pfad
+            print(f"  Fehler: Ordner nicht gefunden: {antwort}")
+            print(f"  Bitte Pfad pruefen, erneut eingeben oder Punkt (.) zum Ueberspringen.")
 
 
 def _interaktive_eingabe(args: argparse.Namespace) -> None:
     """
     Fragt im Terminal nach allen Feldern, die noch nicht gesetzt sind.
-
-    Wird in cmd_run aufgerufen, damit die Pipeline auch ohne CLI-Argumente
-    gestartet werden kann. Audio-Ordner ist Pflicht, Foto-Ordner optional.
-
-    Standardpfade (relativ zum Projektordner, funktioniert auf jedem Rechner):
-      Audio: data/audio
-      Fotos: data/fotos
+    Wird in cmd_run aufgerufen, damit die Pipeline ohne CLI-Argumente
+    gestartet werden kann. Beide Ordner sind optional:
+      - Nur Audio → reines Textprotokoll
+      - Nur Fotos → reine Fotogalerie
+      - Audio + Fotos → vollstaendiges Protokoll
     """
+    # Absolute Standardpfade aus dem Projektordner ableiten
+    projekt = Path(__file__).parent
+    audio_standard = str(projekt / "data" / "audio")
+    foto_standard  = str(projekt / "data" / "fotos")
+
     print("\n" + "=" * 55)
     print("  Audio-Foto-Pipeline  —  Begehungsprotokoll")
     print("=" * 55)
-    print("Bitte Angaben zur Begehung eingeben.")
-    print("(Leere Eingabe = Standardwert in eckigen Klammern)\n")
+    print("Bitte Angaben zur Begehung eingeben.\n")
+    print("Eingabe von:")
+    print("  Nur Audios        → reines Textprotokoll (keine Fotos)")
+    print("  Nur Fotos         → reine Fotogalerie (keine Transkription)")
+    print("  Audios und Fotos  → vollstaendiges Protokoll mit Text und Fotos\n")
 
-    # Audio-Ordner: Pflichtfeld, wird wiederholt bis gueltiger Pfad
-    if not getattr(args, "audio", "") or not Path(args.audio).is_dir():
-        args.audio = _frage_ordner("Audio-Ordner", "data/audio")
+    # Audio-Ordner: optional (kein Audio → Foto-only-Modus)
+    if not getattr(args, "audio", "") or not Path(getattr(args, "audio", "")).is_dir():
+        args.audio = _frage_ordner_optional("Audio-Ordner", audio_standard)
 
-    # Foto-Ordner: optional, Pipeline laeuft auch ohne Fotos
-    if not getattr(args, "fotos", ""):
-        args.fotos = _frage_ordner_optional("Fotos-Ordner", "data/fotos")
-    elif args.fotos and not Path(args.fotos).is_dir():
-        print(f"  Hinweis: '{args.fotos}' nicht gefunden — Pipeline laeuft ohne Fotos.")
-        args.fotos = ""
+    # Foto-Ordner: optional
+    if not getattr(args, "fotos", "") or not Path(getattr(args, "fotos", "")).is_dir():
+        args.fotos = _frage_ordner_optional("Fotos-Ordner", foto_standard)
+
+    # Mindestens eines muss angegeben sein
+    if not args.audio and not args.fotos:
+        print("\n" + "=" * 55)
+        print("Fehler: Weder Audio noch Fotos angegeben.")
+        print("  Bitte mindestens einen Ordner angeben.")
+        print("  Programm wird beendet.")
+        print("=" * 55)
+        sys.exit(1)
 
     # Projektangaben (optional, erscheinen auf Titelseite)
-    args.baustelle = _frage(
-        "Projektname / Baustelle",
-        getattr(args, "baustelle", "") or "",
-    )
-    args.projektnummer = _frage(
-        "Projektnummer",
-        getattr(args, "projektnummer", "") or "",
-    )
-    args.aufnehmer = _frage(
-        "Aufgenommen von",
-        getattr(args, "aufnehmer", "") or "",
-    )
+    # Nur abfragen wenn nicht bereits per CLI gesetzt UND echtes Terminal vorhanden
+    if not getattr(args, "baustelle", "") and _ist_interaktiv():
+        args.baustelle = _frage("Projektname / Baustelle", "")
+    if not getattr(args, "projektnummer", "") and _ist_interaktiv():
+        args.projektnummer = _frage("Projektnummer", "")
+    if not getattr(args, "aufnehmer", "") and _ist_interaktiv():
+        args.aufnehmer = _frage("Aufgenommen von", "")
     print()
 
 
@@ -182,7 +214,7 @@ def cmd_match(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     for a in audios:
-        quelle = "M4A-Metadaten" if a.startzeitpunkt_zuverlaessig else "Dateisystem (Fallback)"
+        quelle = "eingebettet" if a.startzeitpunkt_zuverlaessig else "Dateisystem (Fallback!)"
         print(f"  {a.pfad.name}: {a.startzeitpunkt.strftime('%Y-%m-%d %H:%M:%S')} [{quelle}]")
 
     # Fotos sind optional — Pipeline laeuft auch ohne
@@ -214,8 +246,9 @@ def cmd_transcribe(args: argparse.Namespace) -> None:
     config = lade_config()
     api_key = config.get("openai_api_key", "")
     if not api_key or "DEIN" in api_key.upper() or len(api_key) < 10:
-        print("Fehler: Kein gueltiger OpenAI API-Key in config.json.")
-        print("  Bitte 'openai_api_key' in config.json eintragen.")
+        print("Fehler: Kein gueltiger OpenAI API-Key gefunden.")
+        print("  Bitte OPENAI_API_KEY in der .env-Datei eintragen.")
+        print("  Vorlage: .env.example")
         sys.exit(1)
 
     modell = config.get("whisper_modell", "whisper-1")
@@ -295,7 +328,7 @@ def cmd_export(args: argparse.Namespace) -> None:
         with open(args.mapping, encoding="utf-8") as f:
             mapping = json.load(f)
 
-    # Datum automatisch aus Audio-Metadaten lesen (falls nicht angegeben)
+    # Datum automatisch aus Dateinamen lesen (falls nicht angegeben)
     datum = getattr(args, "datum", "") or ""
     if not datum and befunde:
         audio_pfad_str = befunde[0].get("audio_pfad", "")
@@ -309,7 +342,7 @@ def cmd_export(args: argparse.Namespace) -> None:
                 ]
                 dt = audio_info.startzeitpunkt
                 datum = f"{dt.day}. {_monate_de[dt.month]} {dt.year}"
-                print(f"  Datum aus Audio-Metadaten: {datum}")
+                print(f"  Datum aus Dateinamen: {datum}")
             except Exception:
                 pass
 
@@ -318,7 +351,6 @@ def cmd_export(args: argparse.Namespace) -> None:
         befunde=befunde,
         mapping=mapping,
         ausgabe_pfad=ausgabe,
-        titel=getattr(args, "titel", "Begehungsprotokoll"),
         datum=datum,
         baustelle=getattr(args, "baustelle", ""),
         aufnehmer=getattr(args, "aufnehmer", ""),
@@ -326,38 +358,98 @@ def cmd_export(args: argparse.Namespace) -> None:
     )
 
 
+def _schreibe_json(daten: list, pfad: Path) -> None:
+    """Schreibt eine Liste als JSON-Datei (Hilfsfunktion fuer leere Zwischendateien)."""
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    with open(pfad, "w", encoding="utf-8") as f:
+        json.dump(daten, f, ensure_ascii=False, indent=2)
+
+
+def _erstelle_foto_nur_mapping(foto_ordner: Path, ausgabe_pfad: Path) -> None:
+    """
+    Erstellt ein Foto-Mapping ohne Audio (Foto-only-Modus).
+    Alle Fotos werden als 'nicht_zuordenbar' gespeichert und
+    im Export chronologisch nach EXIF-Zeitstempel eingeordnet.
+    """
+    from match import FotoMapping, lese_alle_fotos, speichere_mapping
+
+    fotos = lese_alle_fotos(foto_ordner)
+    mappings = [
+        FotoMapping(
+            foto_pfad=str(f.pfad),
+            foto_zeitpunkt=f.aufnahmezeitpunkt.isoformat(),
+            audio_datei=None,
+            position_sekunden=None,
+            konfidenz="nicht_zuordenbar",
+        )
+        for f in fotos
+    ]
+    speichere_mapping(mappings, ausgabe_pfad)
+    print(f"  {len(fotos)} Foto(s) fuer Fotogalerie vorbereitet")
+
+
 def cmd_run(args: argparse.Namespace) -> None:
-    """Fuehrt die gesamte Pipeline aus: Matching -> STT -> Formatierung -> Export."""
+    """
+    Fuehrt die gesamte Pipeline aus.
+    Modi:
+      Audio + Fotos → Matching → STT → Formatierung → Export
+      Nur Audio     → STT → Formatierung → Export (ohne Fotos)
+      Nur Fotos     → Fotogalerie-Export (ohne Transkription)
+    """
     # Fehlende Felder interaktiv abfragen
     _interaktive_eingabe(args)
+
+    hat_audio = bool(args.audio)
+    hat_fotos = bool(args.fotos)
 
     arbeitsordner = Path(args.ausgabe_ordner)
     arbeitsordner.mkdir(parents=True, exist_ok=True)
 
-    mapping_pfad = arbeitsordner / "mapping.json"
+    mapping_pfad    = arbeitsordner / "mapping.json"
     transkript_pfad = arbeitsordner / "transkript.json"
-    befunde_pfad = arbeitsordner / "befunde.json"
-    bericht_pfad = arbeitsordner / "bericht.docx"
+    befunde_pfad    = arbeitsordner / "befunde.json"
+    bericht_pfad    = arbeitsordner / "bericht.docx"
 
+    # --- Schritt 1: Matching / Foto-Vorbereitung ---
     print("=" * 55)
-    print("Schritt 1/4: Foto-Audio-Matching")
-    print("=" * 55)
-    args.ausgabe = str(mapping_pfad)
-    cmd_match(args)
+    if hat_audio:
+        print("Schritt 1/4: Foto-Audio-Matching")
+        print("=" * 55)
+        args.ausgabe = str(mapping_pfad)
+        cmd_match(args)
+    elif hat_fotos:
+        print("Schritt 1/4: Foto-Vorbereitung (kein Audio)")
+        print("=" * 55)
+        _erstelle_foto_nur_mapping(Path(args.fotos), mapping_pfad)
+    else:
+        _schreibe_json([], mapping_pfad)
 
+    # --- Schritt 2: Transkription (nur mit Audio) ---
     print("\n" + "=" * 55)
-    print("Schritt 2/4: Speech-to-Text (Whisper API)")
-    print("=" * 55)
-    args.ausgabe = str(transkript_pfad)
-    cmd_transcribe(args)
+    if hat_audio:
+        print("Schritt 2/4: Speech-to-Text (Whisper API)")
+        print("=" * 55)
+        args.ausgabe = str(transkript_pfad)
+        cmd_transcribe(args)
+    else:
+        print("Schritt 2/4: Transkription — wird uebersprungen (kein Audio)")
+        print("=" * 55)
+        _schreibe_json([], transkript_pfad)
 
+    # --- Schritt 3: Formatierung (nur mit Audio) ---
     print("\n" + "=" * 55)
-    print("Schritt 3/4: Textformatierung")
-    print("=" * 55)
-    args.transkript = str(transkript_pfad)
-    args.ausgabe = str(befunde_pfad)
-    cmd_format(args)
+    if hat_audio:
+        print("Schritt 3/4: Textformatierung")
+        print("=" * 55)
+        args.transkript = str(transkript_pfad)
+        args.ausgabe = str(befunde_pfad)
+        cmd_format(args)
+    else:
+        print("Schritt 3/4: Formatierung — wird uebersprungen (kein Audio)")
+        print("=" * 55)
+        _schreibe_json([], befunde_pfad)
 
+    # --- Schritt 4: Word-Export (immer) ---
     print("\n" + "=" * 55)
     print("Schritt 4/4: Word-Export")
     print("=" * 55)
@@ -413,7 +505,7 @@ def main() -> None:
     p_run.add_argument("--baustelle", default="", help="Name der Baustelle (Titelseite)")
     p_run.add_argument("--projektnummer", default="", help="Projektnummer (Titelseite)")
     p_run.add_argument("--aufnehmer", default="", help="Name der aufnehmenden Person (Titelseite)")
-    p_run.add_argument("--datum", default="", help="Datum fuer Bericht (default: aus Audio-Metadaten)")
+    p_run.add_argument("--datum", default="", help="Datum fuer Bericht (default: aus Dateinamen)")
     p_run.set_defaults(func=cmd_run)
 
     # --- match: nur Modul 1 ---
@@ -467,7 +559,7 @@ def main() -> None:
     p_export.add_argument("--baustelle", default="", help="Name der Baustelle (Titelseite)")
     p_export.add_argument("--projektnummer", default="", help="Projektnummer (Titelseite)")
     p_export.add_argument("--aufnehmer", default="", help="Name der aufnehmenden Person (Titelseite)")
-    p_export.add_argument("--datum", default="", help="Datum fuer Bericht (default: aus Audio-Metadaten)")
+    p_export.add_argument("--datum", default="", help="Datum fuer Bericht (default: aus Dateinamen)")
     p_export.set_defaults(func=cmd_export)
 
     args = parser.parse_args()
