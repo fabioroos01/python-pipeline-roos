@@ -473,10 +473,7 @@ def main() -> None:
         epilog=(
             "Beispiele:\n"
             "  python ./main.py run --audio data/audio --fotos data/fotos\n"
-            "  python ./main.py match --audio data/audio --fotos data/fotos\n"
-            "  python ./main.py transcribe --audio data/audio\n"
-            "  python ./main.py format --transkript output/transkript.json\n"
-            "  python ./main.py export --befunde output/befunde.json\n"
+            "  python ./main.py run --audio data/audio --fotos data/fotos --baustelle 'Neubau Luzern'\n"
         ),
     )
 
@@ -499,60 +496,6 @@ def main() -> None:
     p_run.add_argument("--aufnehmer", default="", help="Name der aufnehmenden Person (Titelseite)")
     p_run.add_argument("--datum", default="", help="Datum fuer Bericht (default: aus Dateinamen)")
     p_run.set_defaults(func=cmd_run)
-
-    # --- match: nur Modul 1 ---
-    p_match = subparsers.add_parser(
-        "match",
-        help="Modul 1: Fotos und Audio per Zeitstempel zuordnen",
-    )
-    p_match.add_argument("--audio", required=True, help="Ordner mit Audio-Dateien")
-    p_match.add_argument("--fotos", default="", help="Ordner mit Fotos (optional)")
-    p_match.add_argument(
-        "--ausgabe", default="output/mapping.json",
-        help="Ausgabe-JSON (default: output/mapping.json)",
-    )
-    p_match.set_defaults(func=cmd_match)
-
-    # --- transcribe: nur Modul 2 ---
-    p_transcribe = subparsers.add_parser(
-        "transcribe",
-        help="Modul 2: Audio transkribieren via OpenAI Whisper API",
-    )
-    p_transcribe.add_argument("--audio", required=True, help="Ordner mit Audio-Dateien")
-    p_transcribe.add_argument(
-        "--ausgabe", default="output/transkript.json",
-        help="Ausgabe-JSON (default: output/transkript.json)",
-    )
-    p_transcribe.set_defaults(func=cmd_transcribe)
-
-    # --- format: nur Modul 3 ---
-    p_format = subparsers.add_parser(
-        "format",
-        help="Modul 3: Transkript strukturieren",
-    )
-    p_format.add_argument("--transkript", required=True, help="Transkript-JSON aus Modul 2")
-    p_format.add_argument(
-        "--ausgabe", default="output/befunde.json",
-        help="Ausgabe-JSON (default: output/befunde.json)",
-    )
-    p_format.set_defaults(func=cmd_format)
-
-    # --- export: nur Modul 4 ---
-    p_export = subparsers.add_parser(
-        "export",
-        help="Modul 4: Word-Bericht erstellen",
-    )
-    p_export.add_argument("--befunde", required=True, help="Befunde-JSON aus Modul 3")
-    p_export.add_argument("--mapping", default=None, help="Mapping-JSON aus Modul 1 (fuer Fotos)")
-    p_export.add_argument(
-        "--ausgabe", default="output/bericht.docx",
-        help="Ausgabe .docx (default: output/bericht.docx)",
-    )
-    p_export.add_argument("--baustelle", default="", help="Name der Baustelle (Titelseite)")
-    p_export.add_argument("--projektnummer", default="", help="Projektnummer (Titelseite)")
-    p_export.add_argument("--aufnehmer", default="", help="Name der aufnehmenden Person (Titelseite)")
-    p_export.add_argument("--datum", default="", help="Datum fuer Bericht (default: aus Dateinamen)")
-    p_export.set_defaults(func=cmd_export)
 
     args = parser.parse_args()
     args.func(args)
