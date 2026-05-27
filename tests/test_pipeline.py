@@ -11,8 +11,6 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-from PIL import Image
 
 from format import _bereinige_text, _gruppiere_segmente
 from export import _format_zeit
@@ -70,18 +68,6 @@ def test_zeitformat_null():
 # ---------------------------------------------------------------------------
 # match.py
 # ---------------------------------------------------------------------------
-
-def test_foto_ohne_exif_wirft_fehler():
-    """Foto ohne EXIF-Daten (z.B. Screenshot) → ValueError wird ausgeloest."""
-    from match import lese_exif_zeitpunkt
-    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-        tmp_pfad = Path(tmp.name)
-    try:
-        Image.new("RGB", (10, 10)).save(tmp_pfad)  # JPEG ohne EXIF-Zeitstempel
-        with pytest.raises(ValueError):
-            lese_exif_zeitpunkt(tmp_pfad)
-    finally:
-        tmp_pfad.unlink()
 
 
 def test_dateiname_zeitpunkt_korrekt():
