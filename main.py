@@ -260,7 +260,7 @@ def cmd_transcribe(args: argparse.Namespace) -> None:
 
     print(f"Verwende Whisper-Modell: {modell}")
     alle_transkripte = []
-    fehler_zaehler = 0
+    fehler_meldungen = []
 
     for pfad in audio_dateien:
         print(f"\nTranskribiere: {pfad.name}")
@@ -277,17 +277,25 @@ def cmd_transcribe(args: argparse.Namespace) -> None:
             print(f"  {len(t.segmente)} Segmente, {len(t.volltext)} Zeichen")
         except Exception as e:
             print(f"  Fehler: {e}")
-            fehler_zaehler += 1
+            fehler_meldungen.append(str(e))
 
     # Wenn einzelne oder alle Dateien fehlgeschlagen → Warnung, aber weitermachen
-    if fehler_zaehler > 0:
-        print(f"\nWarnung: {fehler_zaehler} von {len(audio_dateien)} Datei(en) nicht transkribiert.")
+    if fehler_meldungen:
+        print(f"\nWarnung: {len(fehler_meldungen)} von {len(audio_dateien)} Datei(en) nicht transkribiert.")
         print("  Fotos werden trotzdem in den Bericht eingebettet.")
 
     ausgabe.parent.mkdir(parents=True, exist_ok=True)
     with open(ausgabe, "w", encoding="utf-8") as f:
         json.dump(alle_transkripte, f, ensure_ascii=False, indent=2)
     print(f"\nTranskripte gespeichert: {ausgabe}")
+
+    # Fehlermeldungen separat speichern damit cmd_run den richtigen Hinweis anzeigen kann
+    fehler_pfad = ausgabe.parent / "fehler.json"
+    if fehler_meldungen:
+        with open(fehler_pfad, "w", encoding="utf-8") as f:
+            json.dump(fehler_meldungen, f, ensure_ascii=False, indent=2)
+    elif fehler_pfad.exists():
+        fehler_pfad.unlink()  # Alte Fehlerdatei loeschen wenn alles geklappt hat
 
 
 def cmd_format(args: argparse.Namespace) -> None:
@@ -465,10 +473,24 @@ def cmd_run(args: argparse.Namespace) -> None:
         with open(transkript_pfad, encoding="utf-8") as f:
             transkripte = json.load(f)
         if not transkripte:
+            # Fehlergrund aus fehler.json lesen um passenden Hinweis anzuzeigen
+            fehler_pfad = transkript_pfad.parent / "fehler.json"
+            hinweis = "Bitte 'openai_api_key' in config.json pruefen."
+            if fehler_pfad.exists():
+                with open(fehler_pfad, encoding="utf-8") as f:
+                    fehler_liste = json.load(f)
+                if fehler_liste:
+                    erste = fehler_liste[0]
+                    if "Verbindung" in erste:
+                        hinweis = "Bitte Internetverbindung pruefen."
+                    elif "Limit" in erste:
+                        hinweis = "Bitte einige Minuten warten und erneut versuchen."
+                    elif "gross" in erste:
+                        hinweis = "Bitte die Aufnahme(n) kuerzen oder aufteilen (max. 25 MB)."
             print()
             print("Hinweis: Transkription fehlgeschlagen (Schritt 2/4).")
             print("  Der Bericht enthaelt nur Fotos, kein gesprochener Text.")
-            print("  Bitte 'openai_api_key' in config.json pruefen.")
+            print(f"  {hinweis}")
 
     print("=" * 55)
 
