@@ -10,7 +10,7 @@ HSLU — Python for Beginners FS26 — Fabio Roos
 Das Tool nimmt iPhone-Sprachaufnahmen (M4A) und Fotos einer Begehung entgegen und erzeugt daraus automatisch ein strukturiertes Word-Protokoll.
 
 ```
-Audio-Dateien (M4A) + Fotos (JPEG)
+Audio-Dateien (M4A) + Fotos (JPEG/HEIC)
               ↓
 [Modul 1]  Timestamp-Matching    →  output/mapping.json
               ↓
@@ -40,9 +40,7 @@ cd python-pipeline-roos
 # Abhängigkeiten installieren
 pip install -r requirements.txt
 
-# API Key konfigurieren
-cp .env.example .env
-# .env öffnen und OPENAI_API_KEY eintragen
+# API Key eintragen: config.json öffnen und openai_api_key setzen
 ```
 
 ---
@@ -53,14 +51,22 @@ cp .env.example .env
 # Hilfe
 python ./main.py -h
 
-# Gesamte Pipeline (empfohlen)
-python ./main.py run --audio data/audio --fotos data/fotos
+# Pipeline starten (interaktiv — empfohlen)
+python ./main.py run
 
-# Einzelne Module
-python ./main.py match      --audio data/audio --fotos data/fotos
-python ./main.py transcribe --audio data/audio
-python ./main.py format     --transkript output/transkript.json
-python ./main.py export     --befunde output/befunde.json --mapping output/mapping.json
+# Pipeline mit direkten Pfad-Argumenten
+python ./main.py run --audio data/audio --fotos data/fotos
+```
+
+Die Pipeline fragt Ordner, Projektname, Projektnummer und Aufnehmer interaktiv ab.  
+Mit Punkt (`.`) wird ein Schritt übersprungen (z.B. nur Fotos ohne Audio).
+
+---
+
+## Tests
+
+```bash
+python -m pytest tests/
 ```
 
 ---
@@ -69,18 +75,21 @@ python ./main.py export     --befunde output/befunde.json --mapping output/mappi
 
 ```
 python-pipeline-roos/
-├── main.py           # CLI-Einstiegspunkt
-├── match.py          # Modul 1: Foto-Audio-Matching
-├── transcribe.py     # Modul 2: Speech-to-Text (Whisper API)
-├── format.py         # Modul 3: Textformatierung
-├── export.py         # Modul 4: Word-Export
-├── check_m4a.py      # Hilfstool: M4A-Metadaten prüfen
-├── config.json       # Konfiguration (kein API Key)
-├── .env.example      # Vorlage für .env
+├── main.py               # CLI-Einstiegspunkt
+├── match.py              # Modul 1: Foto-Zeitstempel lesen
+├── transcribe.py         # Modul 2: Speech-to-Text (Whisper API)
+├── format.py             # Modul 3: Textformatierung
+├── export.py             # Modul 4: Word-Export
+├── config.json           # Konfiguration (openai_api_key hier eintragen)
 ├── requirements.txt
+├── tests/
+│   └── test_pipeline.py
+├── templates/
+│   ├── Logo_Emch_Berger.png
+│   └── Vorlage_EBWSB.docx
 └── data/
-    ├── audio/        # M4A-Aufnahmen hier ablegen
-    └── fotos/        # JPEG-Fotos hier ablegen
+    ├── audio/            # M4A-Aufnahmen (Beispieldaten enthalten)
+    └── fotos/            # JPEG/HEIC-Fotos (Beispieldaten enthalten)
 ```
 
 ---
@@ -91,5 +100,6 @@ python-pipeline-roos/
 |------------|------------|
 | `openai` | Whisper API (Speech-to-Text) |
 | `python-docx` | Word-Dokument erstellen |
-| `Pillow` | EXIF-Daten aus Fotos lesen |
+| `Pillow` | EXIF-Daten aus Fotos lesen, HEIC konvertieren |
+| `pillow-heif` | HEIC/HEIF-Unterstützung (iPhone-Fotos) |
 | `mutagen` | M4A-Metadaten lesen |

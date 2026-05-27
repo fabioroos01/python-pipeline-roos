@@ -12,6 +12,10 @@ __pycache__/
 # macOS
 .DS_Store
 
+# Screenshots und nicht unterstuetzte Bildformate in Testdaten
+data/fotos/*.png
+data/fotos/*.PNG
+
 # Virtuelle Umgebung
 .venv/
 

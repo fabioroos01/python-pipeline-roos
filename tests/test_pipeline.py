@@ -3,7 +3,7 @@ Tests fuer die Audio-Foto-Pipeline.
 HSLU Python for Beginners FS26 — Fabio Roos
 
 Ausfuehren:
-    pytest tests/
+    python -m pytest tests/
 """
 
 import shutil
