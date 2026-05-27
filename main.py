@@ -36,9 +36,9 @@ def _lese_env(env_pfad: Path = Path(".env")) -> dict:
 
 def lade_config(config_pfad: Path = Path("config.json")) -> dict:
     """
-    Liest Konfiguration aus config.json und API-Key aus .env.
-    Der OPENAI_API_KEY wird aus der .env-Datei geladen (nicht aus config.json),
-    damit er nicht versehentlich geteilt oder committed wird.
+    Liest Konfiguration aus config.json.
+    API-Key Reihenfolge: 1. config.json, 2. .env-Datei (Fallback fuer Entwicklung).
+    Fuer die Abgabe wird der Key direkt in config.json eingetragen.
     """
     if not config_pfad.exists():
         print(f"Fehler: '{config_pfad}' nicht gefunden.")
@@ -46,12 +46,18 @@ def lade_config(config_pfad: Path = Path("config.json")) -> dict:
     with open(config_pfad, encoding="utf-8") as f:
         config = json.load(f)
 
-    env = _lese_env()
-    api_key = env.get("OPENAI_API_KEY", "")
+    # 1. Key direkt aus config.json (Abgabe-Modus)
+    api_key = config.get("openai_api_key", "").strip()
+
+    # 2. Fallback: .env-Datei (Entwicklungs-Modus)
     if not api_key:
-        print("Fehler: OPENAI_API_KEY nicht gefunden.")
-        print("Bitte .env-Datei erstellen (Vorlage: .env.example):")
-        print("  echo 'OPENAI_API_KEY=sk-...' > .env")
+        env = _lese_env()
+        api_key = env.get("OPENAI_API_KEY", "").strip()
+
+    if not api_key:
+        print("Fehler: Kein OpenAI API-Key gefunden.")
+        print("  Option 1 (Abgabe): 'openai_api_key' in config.json eintragen.")
+        print("  Option 2 (Entwicklung): OPENAI_API_KEY in .env-Datei eintragen.")
         sys.exit(1)
 
     config["openai_api_key"] = api_key

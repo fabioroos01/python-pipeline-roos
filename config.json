@@ -1,3 +1,4 @@
 {
-  "whisper_modell": "whisper-1"
+  "whisper_modell": "whisper-1",
+  "openai_api_key": ""
 }
