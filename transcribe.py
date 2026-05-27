@@ -47,7 +47,7 @@ def transkribiere(audio_pfad: Path, api_key: str, modell: str = "whisper-1") -> 
     mit allen Segmenten und deren Zeitstempeln zurueck.
     Args:
         audio_pfad: Pfad zur M4A-Datei (muss existieren).
-        api_key:    Gueltiger OpenAI API-Key (aus .env).
+        api_key:    Gueltiger OpenAI API-Key (aus config.json).
         modell:     Whisper-Modell (default: 'whisper-1').
     Returns:
         Transkript-Objekt mit Segmenten und Zeitstempeln.
@@ -88,8 +88,7 @@ def transkribiere(audio_pfad: Path, api_key: str, modell: str = "whisper-1") -> 
     except AuthenticationError:
         raise RuntimeError(
             "Ungültiger OpenAI API-Key.\n"
-            "  Bitte den OPENAI_API_KEY in der .env-Datei pruefen.\n"
-            "  Vorlage: .env.example"
+            "  Bitte den 'openai_api_key' in der config.json pruefen."
         )
     except RateLimitError:
         raise RuntimeError(

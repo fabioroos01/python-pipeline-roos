@@ -9,6 +9,7 @@ Ausfuehren:
 import shutil
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from format import _bereinige_text, _gruppiere_segmente
 from export import _format_zeit
@@ -100,6 +101,64 @@ def test_fallback_mtime_bei_falschem_dateinamen():
         assert info.startzeitpunkt is not None
     finally:
         tmp_pfad.unlink()
+
+
+# ---------------------------------------------------------------------------
+# transcribe.py — Fehlerbehandlung
+# ---------------------------------------------------------------------------
+
+def _mock_http_response(status_code: int) -> MagicMock:
+    """Erstellt eine minimale Mock-HTTP-Response fuer OpenAI-Fehlerklassen."""
+    r = MagicMock()
+    r.status_code = status_code
+    r.json.return_value = {}
+    r.headers = {}
+    return r
+
+
+def test_falscher_api_key_gibt_fehlermeldung():
+    """Falscher API-Key → RuntimeError mit verstaendlicher Meldung."""
+    from openai import AuthenticationError
+    from transcribe import transkribiere
+    with patch("openai.OpenAI") as mock:
+        mock.return_value.audio.transcriptions.create.side_effect = AuthenticationError(
+            message="invalid", response=_mock_http_response(401), body={}
+        )
+        try:
+            transkribiere(Path("data/audio/20260526-000723.m4a"), api_key="sk-falsch")
+            assert False, "RuntimeError erwartet"
+        except RuntimeError as e:
+            assert "API-Key" in str(e)
+
+
+def test_rate_limit_gibt_fehlermeldung():
+    """Rate-Limit-Fehler → RuntimeError mit Hinweis zum Warten."""
+    from openai import RateLimitError
+    from transcribe import transkribiere
+    with patch("openai.OpenAI") as mock:
+        mock.return_value.audio.transcriptions.create.side_effect = RateLimitError(
+            message="rate limit", response=_mock_http_response(429), body={}
+        )
+        try:
+            transkribiere(Path("data/audio/20260526-000723.m4a"), api_key="sk-test")
+            assert False, "RuntimeError erwartet"
+        except RuntimeError as e:
+            assert "Limit" in str(e)
+
+
+def test_keine_verbindung_gibt_fehlermeldung():
+    """Kein Internet → RuntimeError mit Hinweis zur Internetverbindung."""
+    from openai import APIConnectionError
+    from transcribe import transkribiere
+    with patch("openai.OpenAI") as mock:
+        mock.return_value.audio.transcriptions.create.side_effect = APIConnectionError(
+            request=MagicMock()
+        )
+        try:
+            transkribiere(Path("data/audio/20260526-000723.m4a"), api_key="sk-test")
+            assert False, "RuntimeError erwartet"
+        except RuntimeError as e:
+            assert "Verbindung" in str(e)
 
 
 # ---------------------------------------------------------------------------
