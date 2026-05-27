@@ -8,7 +8,7 @@ Ablauf:
   3. Fotos vor dem ersten Audio erscheinen am Seitenanfang
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
