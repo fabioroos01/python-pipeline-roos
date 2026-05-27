@@ -246,8 +246,7 @@ def cmd_transcribe(args: argparse.Namespace) -> None:
     api_key = config.get("openai_api_key", "")
     if not api_key or "DEIN" in api_key.upper() or len(api_key) < 10:
         print("Fehler: Kein gueltiger OpenAI API-Key gefunden.")
-        print("  Bitte OPENAI_API_KEY in der .env-Datei eintragen.")
-        print("  Vorlage: .env.example")
+        print("  Bitte den 'openai_api_key' in der config.json eintragen.")
         sys.exit(1)
 
     modell = config.get("whisper_modell", "whisper-1")
@@ -261,6 +260,7 @@ def cmd_transcribe(args: argparse.Namespace) -> None:
 
     print(f"Verwende Whisper-Modell: {modell}")
     alle_transkripte = []
+    fehler_zaehler = 0
 
     for pfad in audio_dateien:
         print(f"\nTranskribiere: {pfad.name}")
@@ -277,6 +277,12 @@ def cmd_transcribe(args: argparse.Namespace) -> None:
             print(f"  {len(t.segmente)} Segmente, {len(t.volltext)} Zeichen")
         except Exception as e:
             print(f"  Fehler: {e}")
+            fehler_zaehler += 1
+
+    # Wenn einzelne oder alle Dateien fehlgeschlagen → Warnung, aber weitermachen
+    if fehler_zaehler > 0:
+        print(f"\nWarnung: {fehler_zaehler} von {len(audio_dateien)} Datei(en) nicht transkribiert.")
+        print("  Fotos werden trotzdem in den Bericht eingebettet.")
 
     ausgabe.parent.mkdir(parents=True, exist_ok=True)
     with open(ausgabe, "w", encoding="utf-8") as f:
@@ -453,6 +459,17 @@ def cmd_run(args: argparse.Namespace) -> None:
     print(f"\n{'=' * 55}")
     print("Pipeline abgeschlossen.")
     print(f"Ergebnis: {bericht_pfad}")
+
+    # Hinweis wenn Transkription fehlgeschlagen (leere Transkript-Datei)
+    if hat_audio and transkript_pfad.exists():
+        with open(transkript_pfad, encoding="utf-8") as f:
+            transkripte = json.load(f)
+        if not transkripte:
+            print()
+            print("Hinweis: Transkription fehlgeschlagen (Schritt 2/4).")
+            print("  Der Bericht enthaelt nur Fotos, kein gesprochener Text.")
+            print("  Bitte 'openai_api_key' in config.json pruefen.")
+
     print("=" * 55)
 
 
