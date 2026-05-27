@@ -6,6 +6,7 @@ Ausfuehren:
     pytest tests/
 """
 
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -64,6 +65,41 @@ def test_zeitformat_minuten_sekunden():
 
 def test_zeitformat_null():
     assert _format_zeit(0.0) == "00:00"
+
+
+# ---------------------------------------------------------------------------
+# match.py
+# ---------------------------------------------------------------------------
+
+def test_dateiname_zeitpunkt_korrekt():
+    """Dateiname im Format YYYYMMDD-HHMMSS wird korrekt geparst."""
+    from match import _lese_dateiname_zeitpunkt
+    from datetime import datetime
+    pfad = Path("20260526-000723.m4a")
+    ergebnis = _lese_dateiname_zeitpunkt(pfad)
+    assert ergebnis == datetime(2026, 5, 26, 0, 7, 23)
+
+
+def test_dateiname_zeitpunkt_ungueltig():
+    """Falsches Dateinamen-Format gibt None zurueck."""
+    from match import _lese_dateiname_zeitpunkt
+    assert _lese_dateiname_zeitpunkt(Path("aufnahme.m4a")) is None
+    assert _lese_dateiname_zeitpunkt(Path("test_audio.m4a")) is None
+
+
+def test_fallback_mtime_bei_falschem_dateinamen():
+    """Datei mit falschem Dateinamen → Fallback auf mtime, zuverlaessig=False."""
+    from match import lese_audio_info
+    quelle = Path("data/audio/20260526-000723.m4a")
+    with tempfile.NamedTemporaryFile(suffix="_aufnahme.m4a", delete=False) as tmp:
+        tmp_pfad = Path(tmp.name)
+    try:
+        shutil.copy(quelle, tmp_pfad)
+        info = lese_audio_info(tmp_pfad)
+        assert info.startzeitpunkt_zuverlaessig is False
+        assert info.startzeitpunkt is not None
+    finally:
+        tmp_pfad.unlink()
 
 
 # ---------------------------------------------------------------------------
