@@ -66,11 +66,6 @@ class FotoMapping:
 # M4A-Zeitstempel aus Dateinamen lesen
 # ---------------------------------------------------------------------------
 
-# Speichert Pfade, fuer die die mtime-Fallback-Warnung bereits gezeigt wurde.
-# Verhindert doppelte Warnungen, wenn lese_audio_info() mehrmals aufgerufen wird.
-_gewarnt: set[str] = set()
-
-
 def _lese_dateiname_zeitpunkt(pfad: Path) -> datetime | None:
     """
     Parst den Aufnahmestartzeitpunkt direkt aus dem Dateinamen.
@@ -107,16 +102,13 @@ def lese_audio_info(pfad: Path) -> AudioInfo:
             startzeitpunkt_zuverlaessig=True,
         )
 
-    # Fallback: Dateisystem mtime (Warnung nur einmal pro Datei ausgeben)
+    # Fallback: Dateisystem mtime (Warnung ausgeben)
     mtime = datetime.fromtimestamp(os.path.getmtime(pfad))
-    pfad_key = str(pfad.resolve())
-    if pfad_key not in _gewarnt:
-        print(
-            f"  Warnung: '{pfad.name}' — Dateinamen-Format nicht erkannt "
-            f"(erwartet: YYYYMMDD-HHMMSS.m4a).\n"
-            "    Verwende Dateisystem-mtime als Fallback."
-        )
-        _gewarnt.add(pfad_key)
+    print(
+        f"  Warnung: '{pfad.name}' — Dateinamen-Format nicht erkannt "
+        f"(erwartet: YYYYMMDD-HHMMSS.m4a).\n"
+        "    Verwende Dateisystem-mtime als Fallback."
+    )
     return AudioInfo(
         pfad=pfad,
         startzeitpunkt=mtime,
