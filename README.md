@@ -37,6 +37,11 @@ Audio-Dateien (M4A) + Fotos (JPEG/HEIC)
 git clone https://github.com/fabioroos01/python-pipeline-roos.git
 cd python-pipeline-roos
 
+# Virtuelle Umgebung erstellen und aktivieren
+python -m venv .venv
+source .venv/bin/activate      # macOS / Linux
+# .venv\Scripts\activate       # Windows
+
 # Abhängigkeiten installieren
 pip install -r requirements.txt
 
