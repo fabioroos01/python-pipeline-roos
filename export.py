@@ -26,8 +26,8 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
-# Pfad zum Logo (relativ zum Projektverzeichnis)
-_LOGO_PFAD = Path("templates/Logo_Emch_Berger.png")
+# Pfad zum Logo (relativ zu dieser Datei, unabhaengig vom Startverzeichnis)
+_LOGO_PFAD = Path(__file__).parent / "templates" / "Logo_Emch_Berger.png"
 
 _FOOTER_TEXT = (
     "Emch+Berger WSB AG  |  "
@@ -83,13 +83,6 @@ def _linie_ueber_absatz(paragraph) -> None:
     top.set(qn("w:color"), "AAAAAA")
     pBdr.append(top)
     pPr.append(pBdr)
-
-
-def _format_zeit(sekunden: float) -> str:
-    """Formatiert Sekunden als MM:SS-String. Beispiel: 90.0 → '01:30'"""
-    minuten = int(sekunden) // 60
-    sek = int(sekunden) % 60
-    return f"{minuten:02d}:{sek:02d}"
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +332,7 @@ def _erstelle_notizseiten(
     Fotos ohne Zeitstempel werden ans Ende gehaengt.
     Args:
         doc:     Das Word-Dokument.
-        befunde: Strukturierte Befunde aus format.py (mit audio_pfad, start, ende).
+        befunde: Strukturierte Befunde aus format.py (mit audio_pfad und text).
         mapping: Foto-Audio-Mapping aus match.py als Liste von Dicts.
     """
     # 1. Befunde nach Audio-Datei gruppieren (Reihenfolge innerhalb Audio beibehalten)

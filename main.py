@@ -5,7 +5,7 @@ Verarbeitet Audio-Diktate und Fotos einer Begehung und erstellt
 automatisch einen strukturierten Word-Bericht.
 Aufruf:
     python ./main.py -h
-    python ./main.py run --audio data/audio --fotos data/fotos
+    python ./main.py --audio data/audio --fotos data/fotos
 """
 
 import argparse
@@ -511,33 +511,33 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Beispiele:\n"
-            "  python ./main.py run --audio data/audio --fotos data/fotos\n"
-            "  python ./main.py run --audio data/audio --fotos data/fotos --baustelle 'Neubau Luzern'\n"
+            "  python ./main.py\n"
+            "  python ./main.py --audio data/audio --fotos data/fotos\n"
+            "  python ./main.py --audio data/audio --fotos data/fotos --baustelle 'Neubau Luzern'\n\n"
+            "Hinweis:\n"
+            "  --audio und --fotos erwarten Ordnerpfade, keine einzelnen Dateien.\n"
         ),
     )
 
-    subparsers = parser.add_subparsers(dest="befehl", required=True)
-
-    # --- run: gesamte Pipeline ---
-    p_run = subparsers.add_parser(
-        "run",
-        help="Gesamte Pipeline ausfuehren (empfohlen)",
-        description="Fuehrt alle 4 Module der Reihe nach aus.",
-    )
-    p_run.add_argument("--audio", default="", help="Ordner mit Audio-Dateien (interaktiv abgefragt wenn leer)")
-    p_run.add_argument("--fotos", default="", help="Ordner mit Fotos (interaktiv abgefragt wenn leer)")
-    p_run.add_argument(
+    parser.add_argument("--audio", default="", help="Ordner mit Audio-Dateien, keine einzelne Datei")
+    parser.add_argument("--fotos", default="", help="Ordner mit Fotos, keine einzelne Datei")
+    parser.add_argument(
         "--ausgabe-ordner", default="output", dest="ausgabe_ordner",
         help="Ausgabeordner fuer alle Zwischenresultate (default: output/)",
     )
-    p_run.add_argument("--baustelle", default="", help="Name der Baustelle (Titelseite)")
-    p_run.add_argument("--projektnummer", default="", help="Projektnummer (Titelseite)")
-    p_run.add_argument("--aufnehmer", default="", help="Name der aufnehmenden Person (Titelseite)")
-    p_run.add_argument("--datum", default="", help="Datum fuer Bericht (default: aus Dateinamen)")
-    p_run.set_defaults(func=cmd_run)
+    parser.add_argument("--baustelle", default="", help="Name der Baustelle (Titelseite)")
+    parser.add_argument("--projektnummer", default="", help="Projektnummer (Titelseite)")
+    parser.add_argument("--aufnehmer", default="", help="Name der aufnehmenden Person (Titelseite)")
+    parser.add_argument("--datum", default="", help="Datum fuer Bericht (default: aus Dateinamen)")
 
-    args = parser.parse_args()
-    args.func(args)
+    # Rueckwaertskompatibilitaet: Der Aufruf "python ./main.py run ..."
+    # funktioniert weiterhin, obwohl "run" nicht mehr noetig ist.
+    argv = sys.argv[1:]
+    if argv[:1] == ["run"]:
+        argv = argv[1:]
+
+    args = parser.parse_args(argv)
+    cmd_run(args)
 
 
 if __name__ == "__main__":

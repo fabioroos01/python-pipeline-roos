@@ -98,7 +98,7 @@ def formatiere(transkripte: list[dict]) -> list[dict]:
         transkripte: Liste von Transkript-Dicts aus Modul 2.
                      Jeder Dict enthaelt: audio_pfad, volltext, segmente.
     Returns:
-        Liste von Notiz-Dicts mit: audio_pfad, start, ende, text.
+        Liste von Notiz-Dicts mit: audio_pfad, text.
         Leere Texte werden uebersprungen.
     """
     alle_notizen = []
@@ -113,8 +113,6 @@ def formatiere(transkripte: list[dict]) -> list[dict]:
             if volltext:
                 alle_notizen.append({
                     "audio_pfad": audio_pfad,
-                    "start":      0.0,
-                    "ende":       0.0,
                     "text":       _bereinige_text(volltext),
                 })
             continue
@@ -129,8 +127,6 @@ def formatiere(transkripte: list[dict]) -> list[dict]:
                 continue
             alle_notizen.append({
                 "audio_pfad": audio_pfad,
-                "start":      absatz["start"],
-                "ende":       absatz["ende"],
                 "text":       text,
             })
 

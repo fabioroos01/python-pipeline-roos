@@ -16,7 +16,6 @@ _AUDIO_BEISPIEL = Path(__file__).parent.parent / "data" / "audio" / "20260528-15
 
 
 from format import _bereinige_text, _gruppiere_segmente
-from export import _format_zeit
 from main import _lese_env
 
 
@@ -53,19 +52,6 @@ def test_segmente_mit_grosser_pause_werden_getrennt():
     ]
     gruppen = _gruppiere_segmente(segmente, pause_sekunden=2.0)
     assert len(gruppen) == 2
-
-
-# ---------------------------------------------------------------------------
-# export.py
-# ---------------------------------------------------------------------------
-
-def test_zeitformat_minuten_sekunden():
-    """90 Sekunden sollen als '01:30' formatiert werden."""
-    assert _format_zeit(90.0) == "01:30"
-
-
-def test_zeitformat_null():
-    assert _format_zeit(0.0) == "00:00"
 
 
 # ---------------------------------------------------------------------------

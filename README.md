@@ -12,7 +12,7 @@ Das Tool nimmt iPhone-Sprachaufnahmen (M4A) und Fotos einer Begehung entgegen un
 ```
 Audio-Dateien (M4A) + Fotos (JPEG/HEIC)
               ↓
-[Modul 1]  Timestamp-Matching    →  output/mapping.json
+[Modul 1]  Zeitstempel einlesen  →  output/mapping.json
               ↓
 [Modul 2]  Speech-to-Text        →  output/transkript.json
               ↓
@@ -48,6 +48,11 @@ pip install -r requirements.txt
 # API Key eintragen: config.json öffnen und openai_api_key setzen
 ```
 
+Für die Abgabe kann der API-Key direkt in `config.json` unter `openai_api_key` stehen,
+damit das Projekt ohne zusätzliche Einrichtung geprüft werden kann. Für die Entwicklung
+kann der Key alternativ in einer `.env`-Datei als `OPENAI_API_KEY=...` abgelegt werden.
+Das Programm prüft zuerst `config.json` und nutzt `.env` als Fallback.
+
 ---
 
 ## Verwendung
@@ -57,14 +62,15 @@ pip install -r requirements.txt
 python ./main.py -h
 
 # Pipeline starten (interaktiv — empfohlen)
-python ./main.py run
+python ./main.py
 
 # Pipeline mit direkten Pfad-Argumenten
-python ./main.py run --audio data/audio --fotos data/fotos
+python ./main.py --audio data/audio --fotos data/fotos
 ```
 
 Die Pipeline fragt Ordner, Projektname, Projektnummer und Aufnehmer interaktiv ab.  
 Mit Punkt (`.`) wird ein Schritt übersprungen (z.B. nur Fotos ohne Audio).
+Die Argumente `--audio` und `--fotos` erwarten jeweils einen Ordnerpfad, keine einzelne Datei.
 
 ---
 
@@ -81,7 +87,7 @@ python -m pytest tests/
 ```
 python-pipeline-roos/
 ├── main.py               # CLI-Einstiegspunkt
-├── match.py              # Modul 1: Foto-Zeitstempel lesen
+├── match.py              # Modul 1: Audio- und Foto-Zeitstempel lesen
 ├── transcribe.py         # Modul 2: Speech-to-Text (Whisper API)
 ├── format.py             # Modul 3: Textformatierung
 ├── export.py             # Modul 4: Word-Export
@@ -90,8 +96,7 @@ python-pipeline-roos/
 ├── tests/
 │   └── test_pipeline.py
 ├── templates/
-│   ├── Logo_Emch_Berger.png
-│   └── Vorlage_EBWSB.docx
+│   └── Logo_Emch_Berger.png
 └── data/
     ├── audio/            # M4A-Aufnahmen (Beispieldaten enthalten)
     └── fotos/            # JPEG/HEIC-Fotos (Beispieldaten enthalten)

@@ -1,11 +1,14 @@
 """
-Modul 1: Ordnet Fotos den richtigen M4A-Aufnahmen per Zeitstempel zu.
+Modul 1: Liest Audio- und Foto-Zeitstempel fuer die spaetere Einordnung.
 Ablauf:
   1. Startzeitpunkt jeder M4A-Datei aus dem Dateinamen lesen
      Erwartet Format: YYYYMMDD-HHMMSS.m4a (z.B. 20260526-000723.m4a)
      Fallback: Dateisystem-mtime (mit Warnung)
   2. EXIF-Zeitstempel aller Fotos lesen
-  3. Jedes Foto der zeitlich passenden Audio-Datei zuordnen
+  3. Foto-Zeitstempel als mapping.json speichern
+
+Die konkrete Einordnung der Fotos zu den Audio-Abschnitten passiert beim
+Word-Export in export.py.
 """
 
 import json
