@@ -11,6 +11,9 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+# Absoluter Pfad zur Beispiel-Audiodatei — funktioniert unabhaengig vom Startverzeichnis
+_AUDIO_BEISPIEL = Path(__file__).parent.parent / "data" / "audio" / "20260528-151120.m4a"
+
 
 from format import _bereinige_text, _gruppiere_segmente
 from export import _format_zeit
@@ -89,7 +92,7 @@ def test_dateiname_zeitpunkt_ungueltig():
 def test_fallback_mtime_bei_falschem_dateinamen():
     """Datei mit falschem Dateinamen → Fallback auf mtime, zuverlaessig=False."""
     from match import lese_audio_info
-    quelle = Path("data/audio/20260526-000723.m4a")
+    quelle = _AUDIO_BEISPIEL
     with tempfile.NamedTemporaryFile(suffix="_aufnahme.m4a", delete=False) as tmp:
         tmp_pfad = Path(tmp.name)
     try:
@@ -123,7 +126,7 @@ def test_falscher_api_key_gibt_fehlermeldung():
             message="invalid", response=_mock_http_response(401), body={}
         )
         try:
-            transkribiere(Path("data/audio/20260526-000723.m4a"), api_key="sk-falsch")
+            transkribiere(_AUDIO_BEISPIEL, api_key="sk-falsch")
             assert False, "RuntimeError erwartet"
         except RuntimeError as e:
             assert "API-Key" in str(e)
@@ -138,7 +141,7 @@ def test_rate_limit_gibt_fehlermeldung():
             message="rate limit", response=_mock_http_response(429), body={}
         )
         try:
-            transkribiere(Path("data/audio/20260526-000723.m4a"), api_key="sk-test")
+            transkribiere(_AUDIO_BEISPIEL, api_key="sk-test")
             assert False, "RuntimeError erwartet"
         except RuntimeError as e:
             assert "Limit" in str(e)
@@ -153,7 +156,7 @@ def test_keine_verbindung_gibt_fehlermeldung():
             request=MagicMock()
         )
         try:
-            transkribiere(Path("data/audio/20260526-000723.m4a"), api_key="sk-test")
+            transkribiere(_AUDIO_BEISPIEL, api_key="sk-test")
             assert False, "RuntimeError erwartet"
         except RuntimeError as e:
             assert "Verbindung" in str(e)

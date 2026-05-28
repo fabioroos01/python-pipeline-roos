@@ -13,7 +13,7 @@ from io import BytesIO
 from pathlib import Path
 
 from docx import Document
-from PIL import Image
+from PIL import Image, ImageOps
 
 # HEIC/HEIF-Unterstuetzung aktivieren (gleich wie in match.py)
 try:
@@ -96,21 +96,21 @@ def _format_zeit(sekunden: float) -> str:
 # Fotogalerie
 # ---------------------------------------------------------------------------
 
-def _foto_fuer_word(pfad: Path) -> str | BytesIO:
+def _foto_fuer_word(pfad: Path) -> BytesIO:
     """
     Bereitet ein Foto fuer das Einfuegen ins Word-Dokument vor.
-    JPEG/PNG: Pfad direkt weitergeben.
-    HEIC/HEIF: als JPEG konvertieren, da Word auf Windows HEIC nicht anzeigt.
+    Wendet den EXIF-Orientierungs-Tag an (exif_transpose), damit Hochformat-Fotos
+    vom iPhone korrekt dargestellt werden. Gibt immer ein BytesIO-Objekt zurueck.
     Returns:
-        Pfad-String (JPEG/PNG) oder BytesIO-Objekt (HEIC konvertiert).
+        BytesIO-Objekt mit JPEG-Daten (korrekt orientiert).
     """
-    if pfad.suffix.lower() in (".heic", ".heif"):
-        img = Image.open(pfad).convert("RGB")
-        buf = BytesIO()
-        img.save(buf, format="JPEG", quality=90)
-        buf.seek(0)
-        return buf
-    return str(pfad)
+    img = Image.open(pfad)
+    img = ImageOps.exif_transpose(img)  # EXIF-Rotation anwenden (Hochformat-Fix)
+    img = img.convert("RGB")
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    buf.seek(0)
+    return buf
 
 
 def _zeige_fotos_galerie(doc: Document, foto_pfade: list[Path]) -> None:
@@ -321,16 +321,6 @@ def _zeige_audio_abschnitt(
         # Stichpunkt mit Transkript-Text
         bullet = doc.add_paragraph(style="List Bullet")
         bullet.add_run(befund.get("text", "")).font.size = Pt(10)
-
-        # Zeitstempel (klein, grau, eingerueckt)
-        start = befund.get("start", 0.0)
-        ende = befund.get("ende", 0.0)
-        zeit_p = doc.add_paragraph(f"       [{_format_zeit(start)} – {_format_zeit(ende)}]")
-        zeit_p.runs[0].font.size = Pt(8)
-        zeit_p.runs[0].font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
-        zeit_p.runs[0].italic = True
-        zeit_p.paragraph_format.space_before = Pt(0)
-        zeit_p.paragraph_format.space_after = Pt(2)
 
 
 def _erstelle_notizseiten(
